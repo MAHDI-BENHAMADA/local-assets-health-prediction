@@ -12,13 +12,30 @@ def get_device_type():
     return "laptop" if battery is not None else "desktop"
 
 def get_cpu():
+    temp = None
+    
+    # Method 1: Try WMI (MSAcpi_ThermalZoneTemperature)
     try:
         w = wmi.WMI(namespace="root\\wmi")
         temps = w.MSAcpi_ThermalZoneTemperature()
         # WMI returns temp in tenths of Kelvin
-        temp = round((temps[0].CurrentTemperature / 10.0) - 273.15, 1) if temps else None
+        if temps:
+            temp = round((temps[0].CurrentTemperature / 10.0) - 273.15, 1)
     except:
-        temp = None
+        pass
+    
+    # Method 2: Fallback to psutil.sensors_temperatures()
+    if temp is None:
+        try:
+            temps = psutil.sensors_temperatures()
+            if temps:
+                # Get the first available temperature sensor
+                for sensor_name, readings in temps.items():
+                    if readings:
+                        temp = round(readings[0].current, 1)
+                        break
+        except:
+            pass
 
     return {
         "usage_percent": psutil.cpu_percent(interval=1),
@@ -35,18 +52,32 @@ def get_memory():
 
 def get_disks():
     disks = []
+    # Try to get disk temps from psutil if available
+    disk_temps = {}
+    try:
+        temps = psutil.sensors_temperatures()
+        if 'ssd' in temps or 'nvme' in temps or 'ata' in temps:
+            for sensor_type in ['ssd', 'nvme', 'ata']:
+                if sensor_type in temps:
+                    disk_temps[sensor_type] = round(temps[sensor_type][0].current, 1) if temps[sensor_type] else None
+    except:
+        pass
+    
     for partition in psutil.disk_partitions():
         if 'cdrom' in partition.opts or partition.fstype == '':
             continue
         try:
             usage = psutil.disk_usage(partition.mountpoint)
+            # Try to assign temperature from sensors if available
+            disk_temp = next((v for k, v in disk_temps.items() if v is not None), None)
+            
             disks.append({
                 "drive": partition.mountpoint,
                 "usage_percent": round(usage.percent, 1),
-                "smart_status": None,   # filled by pySMART in next step
-                "read_errors": None,
-                "write_errors": None,
-                "temperature_celsius": None
+                "smart_status": None,   # requires pySMART library
+                "read_errors": None,    # requires pySMART library
+                "write_errors": None,   # requires pySMART library
+                "temperature_celsius": disk_temp
             })
         except PermissionError:
             continue
@@ -84,7 +115,10 @@ def get_battery(device_type):
     if battery is None:
         return None
 
-    # Get design vs full capacity via WMI for health %
+    health = None
+    cycle_count = None
+    
+    # Method 1: Try WMI for design vs full capacity
     try:
         w = wmi.WMI(namespace="root\\wmi")
         batteries = w.BatteryFullChargedCapacity()
@@ -94,8 +128,18 @@ def get_battery(device_type):
         health = round((full_capacity / design_capacity) * 100, 1) if full_capacity and design_capacity else None
         cycle_count = static[0].CycleCount if static else None
     except:
-        health = None
-        cycle_count = None
+        pass
+    
+    # Method 2: Try alternate WMI path for battery info
+    if health is None:
+        try:
+            w = wmi.WMI()
+            battery_info = w.Win32_Battery()
+            if battery_info:
+                # EstimatedChargeRemaining is a percentage
+                health = battery_info[0].EstimatedChargeRemaining
+        except:
+            pass
 
     return {
         "health_percent": health,
