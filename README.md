@@ -16,7 +16,12 @@ A Python utility that collects comprehensive hardware health and performance met
 Install dependencies with:
 
 ```bash
-pip install psutil pypiwin32
+pip install -r requirements.txt
+```
+
+Or manually:
+```bash
+pip install psutil pypiwin32 WMI
 ```
 
 ### Libraries Explained
@@ -24,8 +29,8 @@ pip install psutil pypiwin32
 | Library | Purpose | Installation |
 |---------|---------|--------------|
 | `psutil` | CPU, memory, disk, battery metrics | `pip install psutil` |
-| `pypiwin32` | Windows Management Instrumentation (WMI) access | `pip install pypiwin32` |
-| `wmi` | WMI queries for system info, battery, temperatures | Installed as part of `pypiwin32` |
+| `pypiwin32` | Windows API support | `pip install pypiwin32` |
+| `WMI` | Windows Management Instrumentation queries | `pip install WMI` |
 | `json` | Output formatting (built-in) | - |
 | `socket` | Networking utilities (built-in, currently unused) | - |
 | `datetime` | Timestamp generation (built-in) | - |
