@@ -2,10 +2,13 @@ import psutil
 import wmi
 import json
 import socket
+import requests
 from datetime import datetime, timezone
 
 # --- CONFIG ---
 ASSET_TAG = "DJZ-00142"  # later this comes from a local config file
+SERVER_URL = "http://localhost:5000/api/report"  # Change to your server address if running remotely
+SEND_TO_SERVER = True  # Set to False to only print to terminal
 
 def get_device_type():
     battery = psutil.sensors_battery()
@@ -18,23 +21,45 @@ def get_cpu():
     try:
         w = wmi.WMI(namespace="root\\wmi")
         temps = w.MSAcpi_ThermalZoneTemperature()
-        # WMI returns temp in tenths of Kelvin
-        if temps:
-            temp = round((temps[0].CurrentTemperature / 10.0) - 273.15, 1)
-    except:
+        if temps and hasattr(temps[0], 'CurrentTemperature'):
+            raw_temp = temps[0].CurrentTemperature
+            converted = (raw_temp / 10.0) - 273.15
+            # Only accept reasonable temperatures (0-120°C)
+            if 0 <= converted <= 120:
+                temp = round(converted, 1)
+    except Exception as e:
         pass
     
-    # Method 2: Fallback to psutil.sensors_temperatures()
+    # Method 2: Try Win32_PerfFormattedData (CPU temperature)
+    if temp is None:
+        try:
+            w = wmi.WMI()
+            temps = w.Win32_PerfFormattedData_Counters_ThermalZoneInformation()
+            if temps and len(temps) > 0:
+                for t in temps:
+                    if hasattr(t, 'HighPrecisionTemperature'):
+                        raw_temp = t.HighPrecisionTemperature
+                        converted = (raw_temp / 10.0) - 273.15
+                        if 0 <= converted <= 120:
+                            temp = round(converted, 1)
+                            break
+        except Exception as e:
+            pass
+    
+    # Method 3: Fallback to psutil.sensors_temperatures()
     if temp is None:
         try:
             temps = psutil.sensors_temperatures()
             if temps:
-                # Get the first available temperature sensor
                 for sensor_name, readings in temps.items():
                     if readings:
-                        temp = round(readings[0].current, 1)
+                        for reading in readings:
+                            if 0 <= reading.current <= 120:
+                                temp = round(reading.current, 1)
+                                break
+                    if temp is not None:
                         break
-        except:
+        except Exception as e:
             pass
 
     return {
@@ -163,6 +188,24 @@ def collect():
 
     return snapshot
 
+def send_to_server(snapshot):
+    """Send snapshot to local server for dashboard viewing"""
+    if not SEND_TO_SERVER:
+        return
+    
+    try:
+        response = requests.post(SERVER_URL, json=snapshot, timeout=5)
+        if response.status_code == 200:
+            print(f"✓ Data sent to {SERVER_URL}")
+        else:
+            print(f"✗ Server responded with status {response.status_code}")
+    except requests.exceptions.ConnectionError:
+        print(f"✗ Could not connect to server at {SERVER_URL}")
+        print("  Make sure server.py is running: python server.py")
+    except Exception as e:
+        print(f"✗ Error sending data: {e}")
+
 if __name__ == "__main__":
     snapshot = collect()
     print(json.dumps(snapshot, indent=2))
+    send_to_server(snapshot)

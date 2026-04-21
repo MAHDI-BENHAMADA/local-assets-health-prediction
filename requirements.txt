@@ -1,3 +1,5 @@
 psutil==6.0.0
 pypiwin32==305
 WMI==1.5.1
+requests==2.31.0
+flask==3.0.0
