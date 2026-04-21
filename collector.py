@@ -8,7 +8,7 @@ import wmi
 from datetime import datetime, timezone
 
 # --- CONFIG ---
-SERVER_URL = "http://localhost:5000/api/report"  # Change to your server address if running remotely
+SERVER_URL = "http://172.30.80.154:5000/api/report"  # Change to your server address if running remotely
 SEND_TO_SERVER = True  # Set to False to only print to terminal
 TEMP_MIN_C = 0.0
 TEMP_MAX_C = 120.0
@@ -487,14 +487,17 @@ def get_cpu():
     temp = None
     
     # Method 1: Try WMI (MSAcpi_ThermalZoneTemperature)
+    # NOTE: Older machines/BIOS often return raw value 2731 (~0.05°C) as a
+    # placeholder when the sensor isn't properly exposed. We require > 1°C
+    # to filter out this well-known dummy value.
     try:
         w = wmi.WMI(namespace="root\\wmi")
         temps = w.MSAcpi_ThermalZoneTemperature()
         if temps and hasattr(temps[0], 'CurrentTemperature'):
             raw_temp = temps[0].CurrentTemperature
             converted = (raw_temp / 10.0) - 273.15
-            # Only accept reasonable temperatures (0-120°C)
-            if 0 <= converted <= 120:
+            # Reject dummy ACPI value (~0°C) and enforce sane range
+            if 1 < converted <= 120:
                 temp = round(converted, 1)
     except Exception:
         pass
@@ -509,7 +512,8 @@ def get_cpu():
                     if hasattr(t, 'HighPrecisionTemperature'):
                         raw_temp = t.HighPrecisionTemperature
                         converted = (raw_temp / 10.0) - 273.15
-                        if 0 <= converted <= 120:
+                        # Same guard: reject dummy ~0°C placeholder
+                        if 1 < converted <= 120:
                             temp = round(converted, 1)
                             break
         except Exception:
@@ -715,16 +719,13 @@ def get_battery(device_type):
         cycle_json = run_powershell_json(cycle_script)
         cycle_count = to_int(cycle_json)
     
-    # Method 4: Try Win32_Battery for current health
+    # NOTE: Win32_Battery.EstimatedChargeRemaining is the *current charge level*,
+    # NOT battery wear/health. Using it as a health fallback gives misleading
+    # results (e.g. 100% when fully charged but battery is degraded).
+    # We leave health as None if WMI capacity data is unavailable — the
+    # dashboard should display "N/A" rather than show incorrect health.
     if health is None:
-        try:
-            w = wmi.WMI()
-            battery_info = w.Win32_Battery()
-            if battery_info:
-                # EstimatedChargeRemaining is a percentage
-                health = battery_info[0].EstimatedChargeRemaining
-        except Exception:
-            pass
+        pass  # No reliable OS-level fallback for true battery health on older machines
 
     return {
         "health_percent": health,

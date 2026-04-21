@@ -1,7 +1,7 @@
 from flask import Flask, render_template_string, jsonify, request
 import json
 from datetime import datetime
-b
+
 app = Flask(__name__)
 
 # Store latest snapshot from each device
