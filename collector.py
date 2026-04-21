@@ -1,18 +1,487 @@
-import psutil
-import wmi
 import json
-import socket
+import re
+import shutil
+import subprocess
+import psutil
 import requests
+import wmi
 from datetime import datetime, timezone
 
 # --- CONFIG ---
-ASSET_TAG = "DJZ-00142"  # later this comes from a local config file
 SERVER_URL = "http://localhost:5000/api/report"  # Change to your server address if running remotely
 SEND_TO_SERVER = True  # Set to False to only print to terminal
+TEMP_MIN_C = 0.0
+TEMP_MAX_C = 120.0
+POWERSHELL_TIMEOUT_SECONDS = 8
+
+def get_asset_tag():
+    """Retrieve the actual asset tag from system BIOS via WMI"""
+    try:
+        w = wmi.WMI()
+        system_enclosure = w.Win32_SystemEnclosure()
+        if system_enclosure and hasattr(system_enclosure[0], 'SMBIOSAssetTag'):
+            asset_tag = system_enclosure[0].SMBIOSAssetTag
+            if asset_tag and asset_tag.strip():
+                return asset_tag.strip()
+    except:
+        pass
+    
+    # Fallback to SerialNumber if SMBIOSAssetTag is not available
+    try:
+        w = wmi.WMI()
+        system_product = w.Win32_ComputerSystemProduct()
+        if system_product and hasattr(system_product[0], 'IdentifyingNumber'):
+            serial = system_product[0].IdentifyingNumber
+            if serial and serial.strip():
+                return serial.strip()
+    except:
+        pass
+    
+    # Final fallback
+    return "UNKNOWN"
 
 def get_device_type():
     battery = psutil.sensors_battery()
     return "laptop" if battery is not None else "desktop"
+
+
+def to_int(value):
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_temperature(value):
+    try:
+        if value is None:
+            return None
+        temp = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if TEMP_MIN_C <= temp <= TEMP_MAX_C:
+        return round(temp, 1)
+    return None
+
+
+def normalize_serial(value):
+    if value is None:
+        return None
+    cleaned = re.sub(r"[^A-Z0-9]", "", str(value).upper())
+    return cleaned if cleaned else None
+
+
+def parse_json_output(output):
+    if not output:
+        return None
+
+    raw = output.strip()
+    if not raw:
+        return None
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        for line in reversed(lines):
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
+def run_powershell_json(script):
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=POWERSHELL_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    return parse_json_output(result.stdout)
+
+
+def get_psutil_any_disk_temp():
+    try:
+        temps = psutil.sensors_temperatures() or {}
+    except Exception:
+        return None
+
+    for sensor_type in ("nvme", "ssd", "ata"):
+        readings = temps.get(sensor_type, [])
+        for reading in readings:
+            temp = normalize_temperature(getattr(reading, "current", None))
+            if temp is not None:
+                return temp
+    return None
+
+
+def get_logical_drive_map():
+    mapping = {}
+
+    try:
+        w = wmi.WMI()
+        disk_drives = w.Win32_DiskDrive()
+    except Exception:
+        return mapping
+
+    for disk in disk_drives:
+        disk_info = {
+            "index": to_int(getattr(disk, "Index", None)),
+            "device_id": str(getattr(disk, "DeviceID", "")) or None,
+            "model": getattr(disk, "Model", None),
+            "serial_number": normalize_serial(getattr(disk, "SerialNumber", None)),
+            "status": getattr(disk, "Status", None),
+        }
+
+        try:
+            partitions = disk.associators("Win32_DiskDriveToDiskPartition")
+        except Exception:
+            partitions = []
+
+        for partition in partitions:
+            try:
+                logical_disks = partition.associators("Win32_LogicalDiskToPartition")
+            except Exception:
+                logical_disks = []
+
+            for logical_disk in logical_disks:
+                logical_id = str(getattr(logical_disk, "DeviceID", "")).upper()
+                if logical_id:
+                    mapping[logical_id] = dict(disk_info)
+
+    return mapping
+
+
+def get_storage_reliability_rows():
+    script = r"""
+    $rows = @()
+    Get-PhysicalDisk -ErrorAction SilentlyContinue | ForEach-Object {
+        $pd = $_
+        $rel = $null
+        try { $rel = $pd | Get-StorageReliabilityCounter -ErrorAction Stop } catch {}
+
+        $rows += [PSCustomObject]@{
+            DeviceId = [string]$pd.DeviceId
+            FriendlyName = [string]$pd.FriendlyName
+            SerialNumber = [string]$pd.SerialNumber
+            HealthStatus = [string]$pd.HealthStatus
+            OperationalStatus = [string](($pd.OperationalStatus | ForEach-Object { $_.ToString() }) -join ',')
+            Temperature = if ($rel -and $null -ne $rel.Temperature) { [double]$rel.Temperature } else { $null }
+            ReadErrorsTotal = if ($rel -and $null -ne $rel.ReadErrorsTotal) { [int64]$rel.ReadErrorsTotal } else { $null }
+            WriteErrorsTotal = if ($rel -and $null -ne $rel.WriteErrorsTotal) { [int64]$rel.WriteErrorsTotal } else { $null }
+            PowerOnHours = if ($rel -and $null -ne $rel.PowerOnHours) { [int64]$rel.PowerOnHours } else { $null }
+            Wear = if ($rel -and $null -ne $rel.Wear) { [int]$rel.Wear } else { $null }
+        }
+    }
+    $rows | ConvertTo-Json -Depth 4 -Compress
+    """
+
+    rows = run_powershell_json(script)
+    if rows is None:
+        return []
+    if isinstance(rows, dict):
+        return [rows]
+    if isinstance(rows, list):
+        return rows
+    return []
+
+
+def get_wmi_predict_failure_map():
+    failure_by_index = {}
+    try:
+        w = wmi.WMI(namespace="root\\wmi")
+        statuses = w.MSStorageDriver_FailurePredictStatus()
+    except Exception:
+        return failure_by_index
+
+    for status in statuses:
+        disk_index = to_int(getattr(status, "DiskNumber", None))
+
+        if disk_index is None:
+            instance = str(getattr(status, "InstanceName", "")).upper()
+            match = re.search(r"PHYSICALDRIVE(\d+)", instance)
+            if match:
+                disk_index = int(match.group(1))
+
+        if disk_index is None:
+            continue
+
+        predict_failure = getattr(status, "PredictFailure", None)
+        failure_by_index[disk_index] = bool(predict_failure) if predict_failure is not None else None
+
+    return failure_by_index
+
+
+def parse_wmi_smart_data(vendor_data):
+    parsed = {}
+
+    if vendor_data is None:
+        return parsed
+
+    try:
+        byte_values = [int(v) & 0xFF for v in vendor_data]
+    except Exception:
+        return parsed
+
+    upper = min(len(byte_values), 362)
+    for offset in range(2, upper, 12):
+        try:
+            attr_id = byte_values[offset]
+            if attr_id == 0:
+                continue
+
+            raw_bytes = bytes(byte_values[offset + 5: offset + 11])
+            if len(raw_bytes) != 6:
+                continue
+
+            raw_value = int.from_bytes(raw_bytes, byteorder="little", signed=False)
+
+            if attr_id == 1:
+                parsed["read_errors"] = raw_value
+            elif attr_id == 5:
+                parsed["reallocated_sectors"] = raw_value
+            elif attr_id == 9:
+                parsed["power_on_hours"] = raw_value
+            elif attr_id == 194:
+                parsed["temperature_celsius"] = normalize_temperature(raw_value & 0xFF)
+            elif attr_id == 197:
+                parsed["pending_sectors"] = raw_value
+            elif attr_id == 198:
+                parsed["write_errors"] = raw_value
+        except Exception:
+            continue
+
+    return parsed
+
+
+def get_wmi_smart_attribute_map():
+    attributes_by_index = {}
+
+    try:
+        w = wmi.WMI(namespace="root\\wmi")
+        rows = w.MSStorageDriver_ATAPISmartData()
+    except Exception:
+        return attributes_by_index
+
+    for row in rows:
+        disk_index = to_int(getattr(row, "DiskNumber", None))
+
+        if disk_index is None:
+            instance = str(getattr(row, "InstanceName", "")).upper()
+            match = re.search(r"PHYSICALDRIVE(\d+)", instance)
+            if match:
+                disk_index = int(match.group(1))
+
+        if disk_index is None:
+            continue
+
+        vendor_data = getattr(row, "VendorSpecificData", None)
+        if vendor_data is None:
+            vendor_data = getattr(row, "VendorSpecific", None)
+
+        parsed = parse_wmi_smart_data(vendor_data)
+        if parsed:
+            attributes_by_index[disk_index] = parsed
+
+    return attributes_by_index
+
+
+def get_smartctl_rows():
+    smartctl_path = shutil.which("smartctl")
+    if not smartctl_path:
+        return []
+
+    try:
+        scan_result = subprocess.run(
+            [smartctl_path, "--scan-open", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=POWERSHELL_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+
+    scan_payload = parse_json_output(scan_result.stdout)
+    if not isinstance(scan_payload, dict):
+        return []
+
+    devices = scan_payload.get("devices") or []
+    rows = []
+
+    for device in devices:
+        device_name = str(device.get("name") or "").strip()
+        if not device_name:
+            continue
+
+        try:
+            detail_result = subprocess.run(
+                [smartctl_path, "-a", "-j", device_name],
+                capture_output=True,
+                text=True,
+                timeout=POWERSHELL_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+
+        payload = parse_json_output(detail_result.stdout)
+        if not isinstance(payload, dict):
+            continue
+
+        info_name = str(payload.get("info_name") or "").upper()
+        disk_index = None
+        match = re.search(r"PHYSICALDRIVE(\d+)", info_name)
+        if match:
+            disk_index = int(match.group(1))
+
+        smart_status = None
+        predict_failure = None
+        smart_status_obj = payload.get("smart_status")
+        if isinstance(smart_status_obj, dict) and "passed" in smart_status_obj:
+            passed = smart_status_obj.get("passed")
+            if passed is True:
+                smart_status = "OK"
+                predict_failure = False
+            elif passed is False:
+                smart_status = "Failed"
+                predict_failure = True
+
+        ata_table = (payload.get("ata_smart_attributes") or {}).get("table") or []
+
+        read_errors = None
+        write_errors = None
+        temperature = normalize_temperature((payload.get("temperature") or {}).get("current"))
+        power_on_hours = to_int((payload.get("power_on_time") or {}).get("hours"))
+
+        for attr in ata_table:
+            attr_id = to_int(attr.get("id"))
+            raw_value = to_int((attr.get("raw") or {}).get("value"))
+            if attr_id == 1 and read_errors is None:
+                read_errors = raw_value
+            elif attr_id == 198 and write_errors is None:
+                write_errors = raw_value
+            elif attr_id == 194 and temperature is None:
+                temperature = normalize_temperature(raw_value)
+            elif attr_id == 9 and power_on_hours is None:
+                power_on_hours = raw_value
+
+        nvme_health = payload.get("nvme_smart_health_information_log") or {}
+        media_errors = to_int(nvme_health.get("media_errors"))
+        if read_errors is None:
+            read_errors = media_errors
+        if write_errors is None:
+            write_errors = media_errors
+
+        if power_on_hours is None:
+            power_on_hours = to_int(nvme_health.get("power_on_hours"))
+
+        wear_percent = None
+        percentage_used = to_int(nvme_health.get("percentage_used"))
+        if percentage_used is not None:
+            wear_percent = max(0, 100 - percentage_used)
+
+        rows.append(
+            {
+                "disk_index": disk_index,
+                "model": payload.get("model_name"),
+                "serial_number": normalize_serial(payload.get("serial_number")),
+                "smart_status": smart_status,
+                "predict_failure": predict_failure,
+                "temperature_celsius": temperature,
+                "read_errors": read_errors,
+                "write_errors": write_errors,
+                "power_on_hours": power_on_hours,
+                "wear_percent": wear_percent,
+            }
+        )
+
+    return rows
+
+
+def find_smartctl_match(disk_info, smartctl_rows):
+    if not disk_info:
+        return None
+
+    disk_index = disk_info.get("index")
+    if disk_index is not None:
+        for row in smartctl_rows:
+            if row.get("disk_index") == disk_index:
+                return row
+
+    disk_serial = normalize_serial(disk_info.get("serial_number"))
+    if disk_serial:
+        for row in smartctl_rows:
+            row_serial = normalize_serial(row.get("serial_number"))
+            if row_serial and row_serial == disk_serial:
+                return row
+
+    disk_model = str(disk_info.get("model") or "").strip().upper()
+    if disk_model:
+        for row in smartctl_rows:
+            model_name = str(row.get("model") or "").strip().upper()
+            if model_name and disk_model in model_name:
+                return row
+
+    return None
+
+
+def find_reliability_match(disk_info, reliability_rows):
+    if not disk_info:
+        return None
+
+    disk_index = disk_info.get("index")
+    if disk_index is not None:
+        for row in reliability_rows:
+            if str(row.get("DeviceId")) == str(disk_index):
+                return row
+
+    disk_serial = normalize_serial(disk_info.get("serial_number"))
+    if disk_serial:
+        for row in reliability_rows:
+            row_serial = normalize_serial(row.get("SerialNumber"))
+            if row_serial and row_serial == disk_serial:
+                return row
+
+    disk_model = str(disk_info.get("model") or "").strip().upper()
+    if disk_model:
+        for row in reliability_rows:
+            friendly_name = str(row.get("FriendlyName") or "").strip().upper()
+            if friendly_name and disk_model in friendly_name:
+                return row
+
+    return None
+
+
+def derive_smart_status(base_status, reliability_row, predict_failure):
+    if predict_failure is True:
+        return "PredictedFailure"
+
+    if reliability_row:
+        health_status = str(reliability_row.get("HealthStatus") or "").strip()
+        if health_status:
+            return health_status
+
+        operational_status = str(reliability_row.get("OperationalStatus") or "").strip()
+        if operational_status:
+            return operational_status
+
+    if base_status:
+        return str(base_status)
+
+    return "Unknown"
 
 def get_cpu():
     temp = None
@@ -27,7 +496,7 @@ def get_cpu():
             # Only accept reasonable temperatures (0-120°C)
             if 0 <= converted <= 120:
                 temp = round(converted, 1)
-    except Exception as e:
+    except Exception:
         pass
     
     # Method 2: Try Win32_PerfFormattedData (CPU temperature)
@@ -43,7 +512,7 @@ def get_cpu():
                         if 0 <= converted <= 120:
                             temp = round(converted, 1)
                             break
-        except Exception as e:
+        except Exception:
             pass
     
     # Method 3: Fallback to psutil.sensors_temperatures()
@@ -51,7 +520,7 @@ def get_cpu():
         try:
             temps = psutil.sensors_temperatures()
             if temps:
-                for sensor_name, readings in temps.items():
+                for readings in temps.values():
                     if readings:
                         for reading in readings:
                             if 0 <= reading.current <= 120:
@@ -59,7 +528,7 @@ def get_cpu():
                                 break
                     if temp is not None:
                         break
-        except Exception as e:
+        except Exception:
             pass
 
     return {
@@ -77,92 +546,102 @@ def get_memory():
 
 def get_disks():
     disks = []
-    
-    # Try to get disk temps from psutil if available
-    disk_temps = {}
-    try:
-        temps = psutil.sensors_temperatures()
-        if 'ssd' in temps or 'nvme' in temps or 'ata' in temps:
-            for sensor_type in ['ssd', 'nvme', 'ata']:
-                if sensor_type in temps:
-                    disk_temps[sensor_type] = round(temps[sensor_type][0].current, 1) if temps[sensor_type] else None
-    except:
-        pass
-    
-    # Get comprehensive disk health via WMI
-    disk_health = {}
-    try:
-        w = wmi.WMI()
-        
-        # Method 1: Win32_DiskDrive (basic health)
-        try:
-            for disk in w.Win32_DiskDrive():
-                device_id = disk.DeviceID
-                disk_health[device_id] = {
-                    "smart_status": disk.Status if hasattr(disk, 'Status') else None,
-                    "model": disk.Model if hasattr(disk, 'Model') else None,
-                    "size_gb": round(int(disk.Size) / (1024**3), 1) if hasattr(disk, 'Size') else None,
-                }
-        except:
-            pass
-        
-        # Method 2: Win32_PhysicalMedia (for additional SMART info)
-        try:
-            for media in w.Win32_PhysicalMedia():
-                if hasattr(media, 'SerialNumber'):
-                    # Try to match with disk info
-                    for device_id in disk_health:
-                        disk_health[device_id]["serial"] = media.SerialNumber if hasattr(media, 'SerialNumber') else None
-        except:
-            pass
-        
-        # Method 3: MSStorageDriver_ATAPISmartData (actual SMART data!)
-        try:
-            smart_attrs = w.MSStorageDriver_ATAPISmartData()
-            for attr in smart_attrs:
-                if hasattr(attr, 'DiskNumber'):
-                    disk_id = f"\\\\.\\PHYSICALDRIVE{attr.DiskNumber}"
-                    if disk_id in disk_health:
-                        # Parse SMART attributes
-                        if hasattr(attr, 'VendorSpecificData'):
-                            disk_health[disk_id]["smart_raw"] = attr.VendorSpecificData
-        except:
-            pass
-            
-    except:
-        pass
-    
-    # Match partitions to physical disks and build output
+    logical_drive_map = get_logical_drive_map()
+    reliability_rows = get_storage_reliability_rows()
+    predict_failure_by_index = get_wmi_predict_failure_map()
+    smart_attributes_by_index = get_wmi_smart_attribute_map()
+    smartctl_rows = get_smartctl_rows()
+    psutil_temp_fallback = get_psutil_any_disk_temp()
+
     for partition in psutil.disk_partitions():
-        if 'cdrom' in partition.opts or partition.fstype == '':
+        if "cdrom" in partition.opts or partition.fstype == "":
             continue
+
         try:
             usage = psutil.disk_usage(partition.mountpoint)
-            
-            # Get temperature if available
-            disk_temp = next((v for k, v in disk_temps.items() if v is not None), None)
-            
-            # Get health info - try to match by device
-            smart_status = None
-            for device_id, health_info in disk_health.items():
-                # Simple matching - in real scenario, would do more sophisticated matching
-                if partition.device.replace('\\\\?\\', '') in device_id or 'PHYSICALDRIVE' in device_id:
-                    smart_status = health_info.get('smart_status')
-                    if disk_temp is None:
-                        disk_temp = health_info.get('temperature')
-                    break
-            
-            disks.append({
-                "drive": partition.mountpoint,
-                "usage_percent": round(usage.percent, 1),
-                "smart_status": smart_status if smart_status else "Unknown",  # Show "Unknown" instead of null
-                "read_errors": None,    # For detailed data, use: pip install pySMART
-                "write_errors": None,   # For detailed data, use: pip install pySMART
-                "temperature_celsius": disk_temp
-            })
         except PermissionError:
             continue
-    
+
+        drive_letter = partition.mountpoint.rstrip("\\").upper()
+        disk_info = logical_drive_map.get(drive_letter)
+        reliability = find_reliability_match(disk_info, reliability_rows)
+        smartctl = find_smartctl_match(disk_info, smartctl_rows)
+
+        disk_index = disk_info.get("index") if disk_info else None
+        smart_attrs = smart_attributes_by_index.get(disk_index, {}) if disk_index is not None else {}
+        predict_failure = predict_failure_by_index.get(disk_index) if disk_index is not None else None
+        if predict_failure is None and smartctl:
+            predict_failure = smartctl.get("predict_failure")
+
+        smart_status = derive_smart_status(
+            base_status=disk_info.get("status") if disk_info else None,
+            reliability_row=reliability,
+            predict_failure=predict_failure,
+        )
+
+        if smartctl and smartctl.get("smart_status"):
+            smartctl_status = smartctl.get("smart_status")
+            if smartctl_status in ("Failed", "PredictedFailure"):
+                smart_status = smartctl_status
+            elif smart_status in ("Unknown", "OK", "Healthy"):
+                smart_status = smartctl_status
+
+        disk_temp = normalize_temperature(reliability.get("Temperature")) if reliability else None
+        if disk_temp is None:
+            disk_temp = normalize_temperature(smart_attrs.get("temperature_celsius"))
+        if disk_temp is None and smartctl:
+            disk_temp = normalize_temperature(smartctl.get("temperature_celsius"))
+        if disk_temp is None:
+            disk_temp = psutil_temp_fallback
+
+        read_errors = to_int(reliability.get("ReadErrorsTotal")) if reliability else None
+        if read_errors is None:
+            read_errors = to_int(smart_attrs.get("read_errors"))
+        if read_errors is None and smartctl:
+            read_errors = to_int(smartctl.get("read_errors"))
+
+        write_errors = to_int(reliability.get("WriteErrorsTotal")) if reliability else None
+        if write_errors is None:
+            write_errors = to_int(smart_attrs.get("write_errors"))
+        if write_errors is None and smartctl:
+            write_errors = to_int(smartctl.get("write_errors"))
+
+        power_on_hours = to_int(reliability.get("PowerOnHours")) if reliability else None
+        if power_on_hours is None:
+            power_on_hours = to_int(smart_attrs.get("power_on_hours"))
+        if power_on_hours is None and smartctl:
+            power_on_hours = to_int(smartctl.get("power_on_hours"))
+
+        wear_percent = to_int(reliability.get("Wear")) if reliability else None
+        if wear_percent is None and smartctl:
+            wear_percent = to_int(smartctl.get("wear_percent"))
+
+        telemetry_note = None
+        if all(value is None for value in (disk_temp, read_errors, write_errors, power_on_hours, wear_percent)):
+            if not smartctl_rows:
+                telemetry_note = "Extended telemetry unavailable. Install smartmontools (smartctl) for deeper SMART counters."
+            else:
+                telemetry_note = "Extended disk telemetry is not exposed by this controller/driver."
+        elif any(value is None for value in (disk_temp, read_errors, write_errors, power_on_hours)):
+            telemetry_note = "Partial disk telemetry available."
+
+        disks.append(
+            {
+                "drive": partition.mountpoint,
+                "usage_percent": round(usage.percent, 1),
+                "smart_status": smart_status,
+                "read_errors": read_errors,
+                "write_errors": write_errors,
+                "temperature_celsius": disk_temp,
+                "model": (disk_info.get("model") if disk_info else None) or (smartctl.get("model") if smartctl else None),
+                "serial_number": (disk_info.get("serial_number") if disk_info else None) or (smartctl.get("serial_number") if smartctl else None),
+                "power_on_hours": power_on_hours,
+                "wear_percent": wear_percent,
+                "predict_failure": predict_failure,
+                "telemetry_note": telemetry_note,
+            }
+        )
+
     return disks
 
 def get_system():
@@ -223,10 +702,20 @@ def get_battery(device_type):
                     if hasattr(batt, 'CycleCount'):
                         cycle_count = batt.CycleCount
                         break
-        except:
+        except Exception:
             pass
+
+    # Method 3: Try CIM BatteryCycleCount class via PowerShell
+    if cycle_count is None:
+        cycle_script = (
+            "$c = Get-CimInstance -Namespace root\\wmi -ClassName BatteryCycleCount "
+            "-ErrorAction SilentlyContinue; "
+            "if ($c -and $null -ne $c.CycleCount) { [int]$c.CycleCount | ConvertTo-Json -Compress }"
+        )
+        cycle_json = run_powershell_json(cycle_script)
+        cycle_count = to_int(cycle_json)
     
-    # Method 3: Try Win32_Battery for current health
+    # Method 4: Try Win32_Battery for current health
     if health is None:
         try:
             w = wmi.WMI()
@@ -234,7 +723,7 @@ def get_battery(device_type):
             if battery_info:
                 # EstimatedChargeRemaining is a percentage
                 health = battery_info[0].EstimatedChargeRemaining
-        except:
+        except Exception:
             pass
 
     return {
@@ -247,7 +736,7 @@ def collect():
     device_type = get_device_type()
 
     snapshot = {
-        "asset_tag": ASSET_TAG,
+        "asset_tag": get_asset_tag(),
         "collected_at": datetime.now(timezone.utc).isoformat(),
         "device_type": device_type,
         "cpu": get_cpu(),

@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 Or manually:
 ```bash
-pip install psutil pypiwin32 WMI requests flask
+pip install psutil pywin32 WMI requests flask
 ```
 
 ### Libraries Explained
@@ -45,12 +45,11 @@ pip install psutil pypiwin32 WMI requests flask
 | Library | Purpose | Installation |
 |---------|---------|--------------|
 | `psutil` | CPU, memory, disk, battery metrics | `pip install psutil` |
-| `pypiwin32` | Windows API support | `pip install pypiwin32` |
+| `pywin32` | Windows API support | `pip install pywin32` |
 | `WMI` | Windows Management Instrumentation queries | `pip install WMI` |
 | `requests` | HTTP requests to send data to server | `pip install requests` |
 | `flask` | Web server for dashboard | `pip install flask` |
 | `json` | Output formatting (built-in) | - |
-| `socket` | Networking utilities (built-in, currently unused) | - |
 | `datetime` | Timestamp generation (built-in) | - |
 
 ## Optional Libraries for Enhanced Data
@@ -58,8 +57,8 @@ pip install psutil pypiwin32 WMI requests flask
 To unlock additional health data, optionally install:
 
 ```bash
-# For SMART disk errors and status
-pip install pySMART
+# For deepest SMART counters (temperature, read/write errors, power-on hours)
+# Install smartmontools and ensure smartctl.exe is on PATH
 
 # For LibreHardwareMonitor integration (more complete temperature data)
 # Download from: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor
@@ -148,8 +147,11 @@ Returns JSON with structure:
 - **Expected**: Battery field is `null` for desktops, populated for laptops
 
 ### SMART Status/Errors Return `null`
-- **Cause**: pySMART not installed
-- **Solution**: `pip install pySMART`
+- **Cause**: Your storage controller/driver does not expose reliability counters via Windows APIs
+- **Solution**:
+  - Install smartmontools so `smartctl` is available on PATH
+  - Re-run `collector.py` as Administrator
+  - Check the `telemetry_note` field for exact reason
 
 ### WMI Errors
 - **Cause**: Insufficient privileges or WMI service not running
@@ -159,10 +161,10 @@ Returns JSON with structure:
 
 Create `requirements.txt`:
 ```
-psutil==6.0.0
-pypiwin32==305
+psutil>=6.0.0
+pywin32>=306
 WMI==1.5.1
-requests==2.31.0
+requests>=2.32.3
 flask==3.0.0
 ```
 
