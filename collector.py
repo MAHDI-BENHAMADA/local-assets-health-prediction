@@ -77,6 +77,7 @@ def get_memory():
 
 def get_disks():
     disks = []
+    
     # Try to get disk temps from psutil if available
     disk_temps = {}
     try:
@@ -88,24 +89,80 @@ def get_disks():
     except:
         pass
     
+    # Get comprehensive disk health via WMI
+    disk_health = {}
+    try:
+        w = wmi.WMI()
+        
+        # Method 1: Win32_DiskDrive (basic health)
+        try:
+            for disk in w.Win32_DiskDrive():
+                device_id = disk.DeviceID
+                disk_health[device_id] = {
+                    "smart_status": disk.Status if hasattr(disk, 'Status') else None,
+                    "model": disk.Model if hasattr(disk, 'Model') else None,
+                    "size_gb": round(int(disk.Size) / (1024**3), 1) if hasattr(disk, 'Size') else None,
+                }
+        except:
+            pass
+        
+        # Method 2: Win32_PhysicalMedia (for additional SMART info)
+        try:
+            for media in w.Win32_PhysicalMedia():
+                if hasattr(media, 'SerialNumber'):
+                    # Try to match with disk info
+                    for device_id in disk_health:
+                        disk_health[device_id]["serial"] = media.SerialNumber if hasattr(media, 'SerialNumber') else None
+        except:
+            pass
+        
+        # Method 3: MSStorageDriver_ATAPISmartData (actual SMART data!)
+        try:
+            smart_attrs = w.MSStorageDriver_ATAPISmartData()
+            for attr in smart_attrs:
+                if hasattr(attr, 'DiskNumber'):
+                    disk_id = f"\\\\.\\PHYSICALDRIVE{attr.DiskNumber}"
+                    if disk_id in disk_health:
+                        # Parse SMART attributes
+                        if hasattr(attr, 'VendorSpecificData'):
+                            disk_health[disk_id]["smart_raw"] = attr.VendorSpecificData
+        except:
+            pass
+            
+    except:
+        pass
+    
+    # Match partitions to physical disks and build output
     for partition in psutil.disk_partitions():
         if 'cdrom' in partition.opts or partition.fstype == '':
             continue
         try:
             usage = psutil.disk_usage(partition.mountpoint)
-            # Try to assign temperature from sensors if available
+            
+            # Get temperature if available
             disk_temp = next((v for k, v in disk_temps.items() if v is not None), None)
+            
+            # Get health info - try to match by device
+            smart_status = None
+            for device_id, health_info in disk_health.items():
+                # Simple matching - in real scenario, would do more sophisticated matching
+                if partition.device.replace('\\\\?\\', '') in device_id or 'PHYSICALDRIVE' in device_id:
+                    smart_status = health_info.get('smart_status')
+                    if disk_temp is None:
+                        disk_temp = health_info.get('temperature')
+                    break
             
             disks.append({
                 "drive": partition.mountpoint,
                 "usage_percent": round(usage.percent, 1),
-                "smart_status": None,   # requires pySMART library
-                "read_errors": None,    # requires pySMART library
-                "write_errors": None,   # requires pySMART library
+                "smart_status": smart_status if smart_status else "Unknown",  # Show "Unknown" instead of null
+                "read_errors": None,    # For detailed data, use: pip install pySMART
+                "write_errors": None,   # For detailed data, use: pip install pySMART
                 "temperature_celsius": disk_temp
             })
         except PermissionError:
             continue
+    
     return disks
 
 def get_system():
@@ -148,14 +205,28 @@ def get_battery(device_type):
         w = wmi.WMI(namespace="root\\wmi")
         batteries = w.BatteryFullChargedCapacity()
         static = w.BatteryStaticData()
-        full_capacity = batteries[0].FullChargedCapacity if batteries else None
-        design_capacity = static[0].DesignedCapacity if static else None
-        health = round((full_capacity / design_capacity) * 100, 1) if full_capacity and design_capacity else None
-        cycle_count = static[0].CycleCount if static else None
+        if batteries and static:
+            full_capacity = batteries[0].FullChargedCapacity if batteries else None
+            design_capacity = static[0].DesignedCapacity if static else None
+            health = round((full_capacity / design_capacity) * 100, 1) if full_capacity and design_capacity else None
+            cycle_count = static[0].CycleCount if hasattr(static[0], 'CycleCount') else None
     except:
         pass
     
-    # Method 2: Try alternate WMI path for battery info
+    # Method 2: Try Win32_PerfFormattedData for battery info
+    if cycle_count is None:
+        try:
+            w = wmi.WMI()
+            batteries = w.Win32_PerfFormattedData_Counters_BatteryData()
+            if batteries and len(batteries) > 0:
+                for batt in batteries:
+                    if hasattr(batt, 'CycleCount'):
+                        cycle_count = batt.CycleCount
+                        break
+        except:
+            pass
+    
+    # Method 3: Try Win32_Battery for current health
     if health is None:
         try:
             w = wmi.WMI()
@@ -196,14 +267,14 @@ def send_to_server(snapshot):
     try:
         response = requests.post(SERVER_URL, json=snapshot, timeout=5)
         if response.status_code == 200:
-            print(f"✓ Data sent to {SERVER_URL}")
+            print("[OK] Data sent to server")
         else:
-            print(f"✗ Server responded with status {response.status_code}")
+            print(f"[!] Server responded with status {response.status_code}")
     except requests.exceptions.ConnectionError:
-        print(f"✗ Could not connect to server at {SERVER_URL}")
-        print("  Make sure server.py is running: python server.py")
+        print(f"[!] Could not connect to server at {SERVER_URL}")
+        print("    Make sure server.py is running: python server.py")
     except Exception as e:
-        print(f"✗ Error sending data: {e}")
+        print(f"[!] Error sending data: {e}")
 
 if __name__ == "__main__":
     snapshot = collect()

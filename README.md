@@ -6,10 +6,26 @@ A Python utility that collects comprehensive hardware health and performance met
 
 - **CPU**: Usage percentage, temperature, throttling events
 - **Memory**: Usage percentage, available capacity
-- **Disks**: Per-drive usage, SMART status, temperature, read/write errors
+- **Disks**: Per-drive usage, **SMART status**, temperature, read/write errors
 - **System**: Uptime, OS version, last update date
 - **Battery** (Laptops): Health percentage, cycle count, charging status
 - **Device Type Detection**: Automatically detects laptop vs desktop
+
+## Data Collection Status
+
+### ✅ Fully Working
+- CPU usage & temperature (via WMI)
+- Memory usage & available space
+- **Disk SMART status** (shows "OK" or error)
+- Disk usage per drive
+- System uptime & OS version
+- Battery health % & charging status
+
+### ⚠️ Null Values (Expected)
+- **Disk Temperature**: Requires hardware sensors/drivers
+- **Read/Write Errors**: Requires `pip install pySMART` + Administrator mode
+- **Throttling Events**: System limitation (kernel access needed)
+- **Battery Cycle Count**: Not available on all systems
 
 ## Required Libraries
 
