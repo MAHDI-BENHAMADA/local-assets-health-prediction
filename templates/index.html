@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Health Monitor</title>
+    <style>
+        :root {
+            --primary: #007bff;
+            --bg: #f8f9fa;
+            --card-bg: #ffffff;
+            --text: #2d3436;
+            --text-secondary: #636e72;
+            --border: #dfe6e9;
+            --success: #00b894;
+            --warning: #fdcb6e;
+            --danger: #ff7675;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); padding: 40px 20px; line-height: 1.5; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        header { text-align: center; margin-bottom: 50px; }
+        h1 { font-size: 2.5rem; font-weight: 800; color: var(--text); letter-spacing: -1px; margin-bottom: 8px; }
+        header p { color: var(--text-secondary); font-size: 1.1rem; }
+
+        .devices-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 30px; }
+        
+        .device-card { 
+            background: var(--card-bg); 
+            border-radius: 16px; 
+            padding: 30px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05); 
+            border: 1px solid var(--border);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .device-card:hover { transform: translateY(-5px); box-shadow: 0 15px 35px rgba(0,0,0,0.08); }
+
+        .device-header { margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--bg); padding-bottom: 20px; }
+        .device-info h2 { font-size: 1.5rem; color: var(--primary); margin-bottom: 4px; }
+        .device-type { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); font-weight: 700; }
+        .timestamp { font-size: 0.8rem; color: var(--text-secondary); margin-top: 8px; font-style: italic; }
+
+        .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; background: var(--bg); }
+        
+        .section-title { font-size: 0.9rem; font-weight: 800; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 1px; margin: 25px 0 12px 0; display: flex; align-items: center; }
+        .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); margin-left: 15px; }
+
+        .metric { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--bg); font-size: 0.95rem; }
+        .metric:last-child { border-bottom: none; }
+        .label { color: var(--text-secondary); font-weight: 500; }
+        .val { font-weight: 700; color: var(--text); }
+
+        .disk-item { background: var(--bg); border-radius: 12px; padding: 15px; margin-bottom: 15px; border: 1px solid var(--border); }
+        .disk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .disk-drive { font-weight: 800; font-size: 1.1rem; }
+        
+        .good { color: var(--success); }
+        .warn { color: var(--warning); }
+        .crit { color: var(--danger); }
+
+        .no-devices { text-align: center; padding: 100px; grid-column: 1 / -1; background: white; border-radius: 20px; color: var(--text-secondary); border: 2px dashed var(--border); }
+        .footer-info { text-align: center; margin-top: 60px; color: var(--text-secondary); font-size: 0.9rem; }
+        .footer-info a { color: var(--primary); text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Device Health Dashboard</h1>
+            <p>Live telemetry and predictive diagnostics</p>
+        </header>
+
+        <div id="devicesContainer" class="devices-grid"></div>
+
+        <div class="footer-info">
+            Updates every 5 seconds | <a href="javascript:location.reload()">Manual Refresh</a>
+        </div>
+    </div>
+
+    <script>
+        function formatValue(val, type) {
+            if (val === null || val === undefined) return null;
+            
+            if (type === 'percent') {
+                let cls = val > 90 ? 'crit' : (val > 75 ? 'warn' : 'good');
+                return `<span class="${cls}">${val}%</span>`;
+            }
+            if (type === 'temp') {
+                let cls = val > 75 ? 'crit' : (val > 60 ? 'warn' : 'good');
+                return `<span class="${cls}">${val}°C</span>`;
+            }
+            if (type === 'status') {
+                let cls = (val === 'Healthy' || val === 'OK') ? 'good' : 'crit';
+                return `<span class="${cls}">${val}</span>`;
+            }
+            return val;
+        }
+
+        function renderMetric(label, value, type = null) {
+            const formatted = formatValue(value, type);
+            if (formatted === null) return '';
+            return `
+                <div class="metric">
+                    <span class="label">${label}</span>
+                    <span class="val">${formatted}</span>
+                </div>
+            `;
+        }
+
+        function renderDevice(tag, data) {
+            const { cpu={}, memory={}, system={}, battery={}, disks=[] } = data;
+            
+            let html = `
+                <div class="device-card">
+                    <div class="device-header">
+                        <div class="device-info">
+                            <h2>${tag}</h2>
+                            <div class="device-type">${data.device_type || 'Unknown'}</div>
+                            <div class="timestamp">Last seen: ${new Date(data.collected_at).toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <div class="section-title">System</div>
+                    ${renderMetric('OS Version', system.os_version)}
+                    ${renderMetric('Uptime', system.uptime_hours ? system.uptime_hours + ' hrs' : null)}
+                    ${renderMetric('Last Update', system.last_os_update)}
+
+                    <div class="section-title">Performance</div>
+                    ${renderMetric('CPU Usage', cpu.usage_percent, 'percent')}
+                    ${renderMetric('CPU Temperature', cpu.temperature_celsius, 'temp')}
+                    ${renderMetric('Memory Usage', memory.usage_percent, 'percent')}
+                    ${renderMetric('Memory Available', memory.available_gb ? memory.available_gb + ' GB' : null)}
+
+                    ${battery && battery.charging_status ? `
+                        <div class="section-title">Power</div>
+                        ${renderMetric('Battery Health', battery.health_percent, 'percent')}
+                        ${renderMetric('Status', battery.charging_status)}
+                        ${renderMetric('Cycle Count', battery.cycle_count)}
+                    ` : ''}
+
+                    <div class="section-title">Storage</div>
+                    ${disks.map(disk => `
+                        <div class="disk-item">
+                            <div class="disk-header">
+                                <span class="disk-drive">Drive ${disk.drive}</span>
+                                <span class="val">${formatValue(disk.usage_percent, 'percent')}</span>
+                            </div>
+                            ${renderMetric('Model', disk.model)}
+                            ${renderMetric('Serial', disk.serial_number)}
+                            ${renderMetric('SMART Status', disk.smart_status, 'status')}
+                            ${renderMetric('Temperature', disk.temperature_celsius, 'temp')}
+                            ${renderMetric('Power On', disk.power_on_hours ? disk.power_on_hours + ' hrs' : null)}
+                            ${renderMetric('Wear Level', disk.wear_percent, 'percent')}
+                            ${disk.telemetry_note ? `<div style="font-size: 0.75rem; color: #888; margin-top: 10px; border-top: 1px solid #ddd; padding-top: 5px;">${disk.telemetry_note}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            return html;
+        }
+
+        async function load() {
+            const r = await fetch('/api/devices');
+            const data = await r.json();
+            const container = document.getElementById('devicesContainer');
+            
+            if (Object.keys(data).length === 0) {
+                container.innerHTML = '<div class="no-devices">📡 Waiting for device telemetry... Run collector.py on a machine.</div>';
+            } else {
+                container.innerHTML = Object.entries(data)
+                    .map(([tag, snap]) => renderDevice(tag, snap))
+                    .join('');
+            }
+        }
+
+        load();
+        setInterval(load, 5000);
+    </script>
+</body>
+</html>
