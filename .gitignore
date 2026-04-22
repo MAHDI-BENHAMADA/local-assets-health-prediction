@@ -1,0 +1,12 @@
+# Database (contains real device data)
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# OS
+.DS_Store
+Thumbs.db
