@@ -8,7 +8,7 @@ import wmi
 from datetime import datetime, timezone
 
 # --- CONFIG ---
-SERVER_URL = "http://172.30.80.154:5000/api/report"  # Change to your server address if running remotely
+SERVER_URL = "http://10.191.12.154:5000/api/report"  # Change to your server address if running remotely
 SEND_TO_SERVER = True  # Set to False to only print to terminal
 TEMP_MIN_C = 0.0
 TEMP_MAX_C = 120.0
