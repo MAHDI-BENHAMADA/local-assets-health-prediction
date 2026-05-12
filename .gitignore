@@ -1,0 +1,37 @@
+# ── Large data files ──────────────────────────────────────────────
+harddrive.csv
+*.csv.gz
+*.parquet
+
+# Uncomment below to also ignore all CSVs (comment out if you want to push small ones)
+# *.csv
+
+# ── Trained model binaries ────────────────────────────────────────
+models/
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+
+# ── Python cache ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# ── Virtual environments ───────────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+
+# ── IDE / OS junk ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# ── Logs & temp ───────────────────────────────────────────────────
+*.log
+*.tmp
