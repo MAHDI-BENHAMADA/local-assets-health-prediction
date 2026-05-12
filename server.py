@@ -1,11 +1,23 @@
 from flask import Flask, render_template_string, jsonify, request
 import json
 from datetime import datetime
-b
+
+# ── AI Prediction ──────────────────────────────────────────
+try:
+    from predict import predict as ai_predict
+    AI_ENABLED = True
+    print("✅ AI prediction model loaded successfully")
+except Exception as e:
+    AI_ENABLED = False
+    print(f"⚠️  AI model not available: {e}")
+    print("   Run train_model.py first to enable predictions")
+# ───────────────────────────────────────────────────────────
+
 app = Flask(__name__)
 
-# Store latest snapshot from each device
+# Store latest snapshot + prediction from each device
 device_snapshots = {}
+
 
 @app.route('/', methods=['GET'])
 def dashboard():
@@ -17,139 +29,261 @@ def dashboard():
         <title>Device Health Monitor</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
-            .container { max-width: 1200px; margin: 0 auto; }
-            h1 { color: #333; margin-bottom: 30px; text-align: center; }
-            .devices-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
-            .device-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            .device-header { border-bottom: 2px solid #007bff; padding-bottom: 10px; margin-bottom: 15px; }
-            .device-tag { font-weight: bold; font-size: 18px; color: #007bff; }
-            .device-type { font-size: 12px; color: #666; margin-top: 5px; }
-            .timestamp { font-size: 11px; color: #999; margin-top: 5px; }
-            .metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
-            .metric-label { color: #555; font-weight: 500; }
-            .metric-value { font-weight: bold; color: #333; }
-            .warning { color: #ff9800; }
+            body { font-family: Arial, sans-serif; background: #f0f2f5; padding: 20px; }
+            .container { max-width: 1300px; margin: 0 auto; }
+            h1 { color: #1a1a2e; margin-bottom: 30px; text-align: center; font-size: 26px; }
+
+            .devices-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+                gap: 24px;
+            }
+
+            /* ── Device Card ── */
+            .device-card {
+                background: white;
+                border-radius: 12px;
+                overflow: hidden;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            }
+            .device-header {
+                padding: 16px 20px;
+                background: #1a1a2e;
+                color: white;
+            }
+            .device-tag  { font-weight: bold; font-size: 18px; }
+            .device-type { font-size: 12px; color: #aaa; margin-top: 3px; text-transform: uppercase; letter-spacing: 1px; }
+            .timestamp   { font-size: 11px; color: #888; margin-top: 4px; }
+
+            /* ── AI Score Banner ── */
+            .ai-banner {
+                padding: 18px 20px;
+                display: flex;
+                align-items: center;
+                gap: 20px;
+                border-bottom: 1px solid #eee;
+            }
+            .ai-banner.low      { background: #f0fff4; border-left: 5px solid #4caf50; }
+            .ai-banner.medium   { background: #fffbf0; border-left: 5px solid #ff9800; }
+            .ai-banner.high     { background: #fff5f5; border-left: 5px solid #f44336; }
+            .ai-banner.critical { background: #1a1a2e; border-left: 5px solid #9c27b0; }
+
+            .score-circle {
+                width: 72px; height: 72px;
+                border-radius: 50%;
+                display: flex; flex-direction: column;
+                align-items: center; justify-content: center;
+                font-weight: bold; flex-shrink: 0;
+                border: 3px solid;
+            }
+            .score-circle.low      { border-color: #4caf50; color: #4caf50; }
+            .score-circle.medium   { border-color: #ff9800; color: #ff9800; }
+            .score-circle.high     { border-color: #f44336; color: #f44336; }
+            .score-circle.critical { border-color: #9c27b0; color: #9c27b0; }
+
+            .score-num   { font-size: 22px; line-height: 1; }
+            .score-label { font-size: 10px; color: #999; }
+
+            .ai-details { flex: 1; }
+            .ai-risk {
+                font-size: 13px; font-weight: bold; text-transform: uppercase;
+                letter-spacing: 1px; margin-bottom: 4px;
+            }
+            .ai-risk.low      { color: #4caf50; }
+            .ai-risk.medium   { color: #ff9800; }
+            .ai-risk.high     { color: #f44336; }
+            .ai-risk.critical { color: #9c27b0; }
+
+            .ai-lifetime  { font-size: 13px; color: #555; margin-bottom: 8px; }
+            .ai-concerns  { font-size: 12px; }
+            .concern-item { color: #666; margin-top: 3px; }
+            .concern-item::before { content: "⚠ "; }
+            .concern-ok   { color: #4caf50; font-size: 12px; }
+            .concern-ok::before { content: "✓ "; }
+
+            /* ── Metrics ── */
+            .metrics-body { padding: 16px 20px; }
+            .section-title {
+                font-size: 11px; font-weight: bold; color: #999;
+                text-transform: uppercase; letter-spacing: 1px;
+                margin: 14px 0 8px 0;
+            }
+            .section-title:first-child { margin-top: 0; }
+            .metric {
+                display: flex; justify-content: space-between;
+                padding: 7px 0; border-bottom: 1px solid #f5f5f5;
+                font-size: 13px;
+            }
+            .metric-label { color: #666; }
+            .metric-value { font-weight: 600; color: #333; }
+            .warning  { color: #ff9800; }
             .critical { color: #f44336; }
-            .good { color: #4caf50; }
-            .null-value { color: #999; font-style: italic; }
-            .no-devices { text-align: center; color: #999; padding: 40px; }
-            .refresh-info { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
+            .good     { color: #4caf50; }
+            .null-value { color: #bbb; font-style: italic; font-weight: normal; }
+
+            .no-devices { text-align: center; color: #999; padding: 60px; background: white; border-radius: 12px; }
+            .refresh-info { text-align: center; color: #999; font-size: 12px; margin-top: 20px; }
+            .ai-badge {
+                display: inline-block; font-size: 10px; background: #e8f0fe;
+                color: #1967d2; padding: 2px 8px; border-radius: 10px;
+                font-weight: bold; margin-left: 8px; vertical-align: middle;
+            }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🖥️ Device Health Monitor</h1>
+            <h1>🖥️ Device Health Monitor <span class="ai-badge">AI Powered</span></h1>
             <div id="devicesContainer" class="devices-grid"></div>
             <div class="refresh-info">
-                Page auto-refreshes every 5 seconds | <a href="">Manual Refresh</a>
+                Auto-refreshes every 5 seconds &nbsp;|&nbsp; <a href="">Manual Refresh</a>
             </div>
         </div>
 
         <script>
-            function formatValue(value, metric) {
-                if (value === null || value === undefined) return '<span class="null-value">N/A</span>';
-                
-                let className = '';
-                if (metric.includes('percent') || metric === 'health_percent') {
-                    if (value > 90) className = 'critical';
-                    else if (value > 75) className = 'warning';
-                    else className = 'good';
-                    return `<span class="${className}">${value}%</span>`;
+            function riskClass(risk) {
+                if (!risk) return 'low';
+                return risk.toLowerCase();
+            }
+
+            function formatMetric(value, type) {
+                if (value === null || value === undefined)
+                    return '<span class="null-value">N/A</span>';
+
+                if (type === 'percent') {
+                    let cls = value > 85 ? 'critical' : value > 70 ? 'warning' : 'good';
+                    return `<span class="${cls}">${value}%</span>`;
                 }
-                if (metric === 'temperature_celsius') {
-                    if (value > 80) className = 'critical';
-                    else if (value > 60) className = 'warning';
-                    else className = 'good';
-                    return `<span class="${className}">${value}°C</span>`;
+                if (type === 'temp') {
+                    let cls = value > 80 ? 'critical' : value > 65 ? 'warning' : 'good';
+                    return `<span class="${cls}">${value}°C</span>`;
+                }
+                if (type === 'bat_health') {
+                    let cls = value < 60 ? 'critical' : value < 80 ? 'warning' : 'good';
+                    return `<span class="${cls}">${value}%</span>`;
                 }
                 return value;
             }
 
+            function renderAIBanner(prediction) {
+                if (!prediction) {
+                    return `<div class="ai-banner low" style="background:#f9f9f9; border-left-color:#ccc;">
+                        <div style="color:#999; font-size:13px;">AI prediction not available</div>
+                    </div>`;
+                }
+
+                const rc   = riskClass(prediction.risk_level);
+                const health = prediction.health_percent;
+                const months = prediction.remaining_months;
+                const years  = (months / 12).toFixed(1);
+                const concerns = prediction.concerns || [];
+
+                const concernsHtml = concerns.map(c =>
+                    c.toLowerCase().includes('no major')
+                        ? `<div class="concern-ok">${c}</div>`
+                        : `<div class="concern-item">${c}</div>`
+                ).join('');
+
+                return `
+                    <div class="ai-banner ${rc}">
+                        <div class="score-circle ${rc}">
+                            <span class="score-num">${health}%</span>
+                            <span class="score-label">Health</span>
+                        </div>
+                        <div class="ai-details">
+                            <div class="ai-risk ${rc}">${prediction.risk_level} Risk</div>
+                            <div class="ai-lifetime">
+                                ⏱ Est. <strong>${months} months</strong> (${years} yrs) remaining
+                            </div>
+                            <div class="ai-concerns">${concernsHtml}</div>
+                        </div>
+                    </div>`;
+            }
+
             function renderDevice(assetTag, data) {
-                const device = data;
-                const cpu = device.cpu || {};
-                const memory = device.memory || {};
-                const system = device.system || {};
-                const battery = device.battery || {};
-                const disks = device.disks || [];
+                const cpu    = data.cpu    || {};
+                const memory = data.memory || {};
+                const system = data.system || {};
+                const battery = data.battery || null;
+                const disks  = data.disks  || [];
+                const prediction = data.prediction || null;
 
                 let html = `
                     <div class="device-card">
                         <div class="device-header">
                             <div class="device-tag">${assetTag}</div>
-                            <div class="device-type">${device.device_type || 'unknown'}</div>
-                            <div class="timestamp">${new Date(device.collected_at).toLocaleString()}</div>
-                        </div>
-                        
-                        <div style="font-size: 13px; font-weight: bold; color: #333; margin: 10px 0;">SYSTEM</div>
-                        <div class="metric">
-                            <span class="metric-label">Uptime</span>
-                            <span class="metric-value">${system.uptime_hours || 'N/A'} hrs</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">OS Version</span>
-                            <span class="metric-value">${system.os_version || 'N/A'}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Last Update</span>
-                            <span class="metric-value">${system.last_os_update || 'N/A'}</span>
+                            <div class="device-type">${data.device_type || 'unknown'}</div>
+                            <div class="timestamp">Last seen: ${new Date(data.collected_at).toLocaleString()}</div>
                         </div>
 
-                        <div style="font-size: 13px; font-weight: bold; color: #333; margin: 15px 0 10px 0;">HARDWARE</div>
-                        <div class="metric">
-                            <span class="metric-label">CPU Usage</span>
-                            <span class="metric-value">${formatValue(cpu.usage_percent, 'usage_percent')}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">CPU Temp</span>
-                            <span class="metric-value">${formatValue(cpu.temperature_celsius, 'temperature_celsius')}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Memory Usage</span>
-                            <span class="metric-value">${formatValue(memory.usage_percent, 'usage_percent')}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Memory Available</span>
-                            <span class="metric-value">${memory.available_gb || 'N/A'} GB</span>
-                        </div>
+                        ${renderAIBanner(prediction)}
+
+                        <div class="metrics-body">
+                            <div class="section-title">System</div>
+                            <div class="metric">
+                                <span class="metric-label">Uptime</span>
+                                <span class="metric-value">${system.uptime_hours || 'N/A'} hrs</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">OS Version</span>
+                                <span class="metric-value">${system.os_version || 'N/A'}</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Last Update</span>
+                                <span class="metric-value">${system.last_os_update || 'N/A'}</span>
+                            </div>
+
+                            <div class="section-title">CPU</div>
+                            <div class="metric">
+                                <span class="metric-label">Usage</span>
+                                <span class="metric-value">${formatMetric(cpu.usage_percent, 'percent')}</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Temperature</span>
+                                <span class="metric-value">${formatMetric(cpu.temperature_celsius, 'temp')}</span>
+                            </div>
+
+                            <div class="section-title">Memory</div>
+                            <div class="metric">
+                                <span class="metric-label">Usage</span>
+                                <span class="metric-value">${formatMetric(memory.usage_percent, 'percent')}</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Available</span>
+                                <span class="metric-value">${memory.available_gb || 'N/A'} GB</span>
+                            </div>
                 `;
 
-                if (battery && battery.health_percent !== null) {
+                if (battery && battery.health_percent !== null && battery.health_percent !== undefined) {
                     html += `
-                        <div style="font-size: 13px; font-weight: bold; color: #333; margin: 15px 0 10px 0;">BATTERY</div>
-                        <div class="metric">
-                            <span class="metric-label">Health</span>
-                            <span class="metric-value">${formatValue(battery.health_percent, 'health_percent')}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Status</span>
-                            <span class="metric-value">${battery.charging_status || 'N/A'}</span>
-                        </div>
-                        ${battery.cycle_count ? `
-                        <div class="metric">
-                            <span class="metric-label">Cycle Count</span>
-                            <span class="metric-value">${battery.cycle_count}</span>
-                        </div>
-                        ` : ''}
+                            <div class="section-title">Battery</div>
+                            <div class="metric">
+                                <span class="metric-label">Health</span>
+                                <span class="metric-value">${formatMetric(battery.health_percent, 'bat_health')}</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Status</span>
+                                <span class="metric-value">${battery.charging_status || 'N/A'}</span>
+                            </div>
+                            ${battery.cycle_count != null ? `
+                            <div class="metric">
+                                <span class="metric-label">Cycle Count</span>
+                                <span class="metric-value">${battery.cycle_count}</span>
+                            </div>` : ''}
                     `;
                 }
 
                 if (disks.length > 0) {
-                    html += `
-                        <div style="font-size: 13px; font-weight: bold; color: #333; margin: 15px 0 10px 0;">DISKS</div>
-                    `;
+                    html += `<div class="section-title">Disks</div>`;
                     disks.forEach(disk => {
                         html += `
                             <div class="metric">
                                 <span class="metric-label">${disk.drive} Usage</span>
-                                <span class="metric-value">${formatValue(disk.usage_percent, 'usage_percent')}</span>
-                            </div>
-                        `;
+                                <span class="metric-value">${formatMetric(disk.usage_percent, 'percent')}</span>
+                            </div>`;
                     });
                 }
 
-                html += `</div>`;
+                html += `</div></div>`;
                 return html;
             }
 
@@ -159,7 +293,12 @@ def dashboard():
                     .then(data => {
                         const container = document.getElementById('devicesContainer');
                         if (Object.keys(data).length === 0) {
-                            container.innerHTML = '<div class="no-devices">No devices connected yet. Run collector.py to send data.</div>';
+                            container.innerHTML = `
+                                <div class="no-devices">
+                                    <div style="font-size:40px;margin-bottom:16px">📡</div>
+                                    <div>No devices connected yet.</div>
+                                    <div style="font-size:12px;margin-top:8px">Run collector.py to send data.</div>
+                                </div>`;
                         } else {
                             container.innerHTML = Object.entries(data)
                                 .map(([tag, snapshot]) => renderDevice(tag, snapshot))
@@ -176,21 +315,41 @@ def dashboard():
     """
     return render_template_string(html)
 
+
 @app.route('/api/devices', methods=['GET'])
 def get_devices():
     """Return JSON of all device snapshots"""
     return jsonify(device_snapshots)
 
+
 @app.route('/api/report', methods=['POST'])
 def receive_report():
-    """Receive device health report from collector"""
+    """Receive device health report from collector and run AI prediction"""
     try:
         data = request.json
         asset_tag = data.get('asset_tag', 'unknown')
+
+        # ── Run AI prediction ──────────────────────────
+        if AI_ENABLED:
+            try:
+                prediction = ai_predict(data)
+                data["prediction"] = prediction
+                print(f"[AI] {asset_tag} → Health: {prediction['health_percent']}% | "
+                      f"Remaining: {prediction['remaining_months']} months | "
+                      f"Risk: {prediction['risk_level']}")
+            except Exception as e:
+                print(f"[AI] Prediction failed for {asset_tag}: {e}")
+                data["prediction"] = None
+        else:
+            data["prediction"] = None
+        # ───────────────────────────────────────────────
+
         device_snapshots[asset_tag] = data
         return jsonify({"status": "ok", "message": f"Received data for {asset_tag}"}), 200
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
+
 
 if __name__ == '__main__':
     print("Starting Device Health Monitor Server...")
