@@ -275,10 +275,55 @@ def dashboard():
                 if (disks.length > 0) {
                     html += `<div class="section-title">Disks</div>`;
                     disks.forEach(disk => {
+                        const driveLabel = disk.drive.replace(/\\/g, '');
+                        const model = disk.model ? `<span style="color:#aaa;font-size:11px;margin-left:6px">${disk.model}</span>` : '';
+                        const poh = disk.power_on_hours;
+                        let ageStr = '<span class="null-value">N/A</span>';
+                        if (poh !== null && poh !== undefined) {
+                            const years = Math.floor(poh / 8760);
+                            const months = Math.floor((poh % 8760) / 730);
+                            ageStr = years > 0 ? `${years}y ${months}m (${poh.toLocaleString()} hrs)` : `${months} months (${poh.toLocaleString()} hrs)`;
+                        }
+                        const smartCls = disk.smart_status === 'Healthy' || disk.smart_status === 'OK' ? 'good'
+                            : disk.smart_status === 'PredictedFailure' || disk.smart_status === 'Failed' ? 'critical'
+                            : disk.smart_status === 'Warning' ? 'warning' : '';
+                        const reCls  = disk.read_errors  > 0 ? 'critical' : disk.read_errors === 0 ? 'good' : '';
+                        const wrCls  = disk.write_errors > 0 ? 'critical' : disk.write_errors === 0 ? 'good' : '';
+                        const wearCls = disk.wear_percent !== null && disk.wear_percent !== undefined
+                            ? (disk.wear_percent < 20 ? 'critical' : disk.wear_percent < 50 ? 'warning' : 'good') : '';
                         html += `
-                            <div class="metric">
-                                <span class="metric-label">${disk.drive} Usage</span>
-                                <span class="metric-value">${formatMetric(disk.usage_percent, 'percent')}</span>
+                            <div style="background:#fafafa;border:1px solid #eee;border-radius:8px;padding:10px 12px;margin-bottom:8px">
+                                <div style="font-weight:600;font-size:13px;margin-bottom:6px">${driveLabel} ${model}</div>
+                                <div class="metric">
+                                    <span class="metric-label">Usage</span>
+                                    <span class="metric-value">${formatMetric(disk.usage_percent, 'percent')}</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Temperature</span>
+                                    <span class="metric-value">${formatMetric(disk.temperature_celsius, 'temp')}</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Read Errors</span>
+                                    <span class="metric-value ${reCls}">${disk.read_errors !== null && disk.read_errors !== undefined ? disk.read_errors : '<span class="null-value">N/A</span>'}</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Write Errors</span>
+                                    <span class="metric-value ${wrCls}">${disk.write_errors !== null && disk.write_errors !== undefined ? disk.write_errors : '<span class="null-value">N/A</span>'}</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Age (Power-On)</span>
+                                    <span class="metric-value">${ageStr}</span>
+                                </div>
+                                ${disk.wear_percent !== null && disk.wear_percent !== undefined ? `
+                                <div class="metric">
+                                    <span class="metric-label">Wear Remaining</span>
+                                    <span class="metric-value ${wearCls}">${disk.wear_percent}%</span>
+                                </div>` : ''}
+                                <div class="metric">
+                                    <span class="metric-label">SMART Status</span>
+                                    <span class="metric-value ${smartCls}">${disk.smart_status || '<span class="null-value">N/A</span>'}</span>
+                                </div>
+                                ${disk.telemetry_note ? `<div style="font-size:11px;color:#999;margin-top:4px">ℹ️ ${disk.telemetry_note}</div>` : ''}
                             </div>`;
                     });
                 }
