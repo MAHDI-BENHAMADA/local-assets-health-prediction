@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template, jsonify, request
 import json
 from datetime import datetime
 
@@ -363,7 +363,6 @@ def dashboard():
 
 @app.route('/api/devices', methods=['GET'])
 def get_devices():
-    """Return JSON of all device snapshots"""
     return jsonify(device_snapshots)
 
 
@@ -397,7 +396,4 @@ def receive_report():
 
 
 if __name__ == '__main__':
-    print("Starting Device Health Monitor Server...")
-    print("📊 Open http://localhost:5000 in your browser")
-    print("Press Ctrl+C to stop")
     app.run(host='0.0.0.0', port=5000, debug=False)
