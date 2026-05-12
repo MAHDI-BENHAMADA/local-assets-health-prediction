@@ -1,12 +1,37 @@
-# Database (contains real device data)
-*.db
+# ── Large data files ──────────────────────────────────────────────
+harddrive.csv
+*.csv.gz
+*.parquet
 
-# Python
+# Uncomment below to also ignore all CSVs (comment out if you want to push small ones)
+# *.csv
+
+# ── Trained model binaries ────────────────────────────────────────
+models/
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+
+# ── Python cache ──────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
+.pytest_cache/
+
+# ── Virtual environments ───────────────────────────────────────────
+venv/
+.venv/
+env/
 .env
 
-# OS
-.DS_Store
+# ── IDE / OS junk ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
 Thumbs.db
+
+# ── Logs & temp ───────────────────────────────────────────────────
+*.log
+*.tmp
