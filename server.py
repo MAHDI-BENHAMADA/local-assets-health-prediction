@@ -275,7 +275,7 @@ def dashboard():
                 if (disks.length > 0) {
                     html += `<div class="section-title">Disks</div>`;
                     disks.forEach(disk => {
-                        const driveLabel = disk.drive.replace(/\\/g, '');
+                        const driveLabel = disk.drive.replace(/\\\\/g, '');
                         const model = disk.model ? `<span style="color:#aaa;font-size:11px;margin-left:6px">${disk.model}</span>` : '';
                         const poh = disk.power_on_hours;
                         let ageStr = '<span class="null-value">N/A</span>';
@@ -345,11 +345,17 @@ def dashboard():
                                     <div style="font-size:12px;margin-top:8px">Run collector.py to send data.</div>
                                 </div>`;
                         } else {
-                            container.innerHTML = Object.entries(data)
-                                .map(([tag, snapshot]) => renderDevice(tag, snapshot))
-                                .join('');
+                            try {
+                                container.innerHTML = Object.entries(data)
+                                    .map(([tag, snapshot]) => renderDevice(tag, snapshot))
+                                    .join('');
+                            } catch (e) {
+                                console.error(e);
+                                container.innerHTML = `<div style="color:red">Error rendering device: ${e.message}</div>`;
+                            }
                         }
-                    });
+                    })
+                    .catch(err => console.error("Fetch error:", err));
             }
 
             loadDevices();
