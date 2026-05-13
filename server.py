@@ -345,11 +345,17 @@ def dashboard():
                                     <div style="font-size:12px;margin-top:8px">Run collector.py to send data.</div>
                                 </div>`;
                         } else {
-                            container.innerHTML = Object.entries(data)
-                                .map(([tag, snapshot]) => renderDevice(tag, snapshot))
-                                .join('');
+                            try {
+                                container.innerHTML = Object.entries(data)
+                                    .map(([tag, snapshot]) => renderDevice(tag, snapshot))
+                                    .join('');
+                            } catch (e) {
+                                console.error(e);
+                                container.innerHTML = `<div style="color:red">Error rendering device: ${e.message}</div>`;
+                            }
                         }
-                    });
+                    })
+                    .catch(err => console.error("Fetch error:", err));
             }
 
             loadDevices();

@@ -9,7 +9,6 @@ os.environ["PATH"] = SMARTMONTOOLS_BIN + os.pathsep + os.environ.get("PATH", "")
 
 from pySMART import DeviceList
 
-
 def smartctl_json(device_name):
     """Call smartctl -a -j directly and return parsed JSON."""
     smartctl = shutil.which("smartctl")
@@ -27,7 +26,6 @@ def smartctl_json(device_name):
 def get_disk_info(dev):
     device_path = f"/dev/{dev.name}" if not dev.name.startswith("/") else dev.name
     data = smartctl_json(device_path)
-
     nvme     = data.get("nvme_smart_health_information_log", {})
     temp_obj = data.get("temperature", {})
     poh_obj  = data.get("power_on_time", {})
@@ -47,7 +45,6 @@ def get_disk_info(dev):
         attr_5   = ata_attrs.get(5,   {}).get("raw", {}).get("value", 0)
         media_errors = (attr_197 or 0) + (attr_5 or 0)
     # ───────────────────────────────────────────────────
-
     endurance       = data.get("endurance_used", {})
     pct_used        = endurance.get("current_percent") or nvme.get("percentage_used")
     wear_remaining  = (100 - pct_used) if pct_used is not None else None
