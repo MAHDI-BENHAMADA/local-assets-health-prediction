@@ -275,7 +275,7 @@ def dashboard():
                 if (disks.length > 0) {
                     html += `<div class="section-title">Disks</div>`;
                     disks.forEach(disk => {
-                        const driveLabel = disk.drive.replace(/\\\\/g, '');
+                        const driveLabel = disk.drive.replace(/\\/g, '');
                         const model = disk.model ? `<span style="color:#aaa;font-size:11px;margin-left:6px">${disk.model}</span>` : '';
                         const poh = disk.power_on_hours;
                         let ageStr = '<span class="null-value">N/A</span>';
