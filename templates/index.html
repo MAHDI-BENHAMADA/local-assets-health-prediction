@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Device Health Monitor</title>
+    <title>Device Health Monitor (Rule-Based Engine)</title>
     <style>
         :root {
             --primary: #007bff;
@@ -14,6 +14,7 @@
             --border: #dfe6e9;
             --success: #00b894;
             --warning: #fdcb6e;
+            --at-risk: #ff9f43;
             --danger: #ff7675;
         }
 
@@ -35,26 +36,54 @@
             border: 1px solid var(--border);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
-        .device-card:hover { transform: translateY(-5px); box-shadow: 0 15px 35px rgba(0,0,0,0.08); }
+        .device-card:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(0,0,0,0.08); }
 
-        .device-header { margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--bg); padding-bottom: 20px; }
+        .device-header { margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; }
         .device-info h2 { font-size: 1.5rem; color: var(--primary); margin-bottom: 4px; }
         .device-type { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); font-weight: 700; }
-        .timestamp { font-size: 0.8rem; color: var(--text-secondary); margin-top: 8px; font-style: italic; }
+        .timestamp { font-size: 0.8rem; color: var(--text-secondary); margin-top: 5px; }
+
+        /* Analyzer Banner */
+        .analyzer-banner { 
+            padding: 20px; border-radius: 12px; margin-bottom: 25px; 
+            display: flex; gap: 15px; align-items: center; 
+        }
+        .analyzer-banner.Healthy { background: #e8f5e9; border-left: 6px solid var(--success); }
+        .analyzer-banner.Watch { background: #fff8e1; border-left: 6px solid var(--warning); }
+        .analyzer-banner.At.Risk, .analyzer-banner.At-Risk { background: #fff3e0; border-left: 6px solid var(--at-risk); }
+        .analyzer-banner.Critical { background: #ffebee; border-left: 6px solid var(--danger); }
+        
+        .score-circle {
+            width: 70px; height: 70px; border-radius: 50%;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-weight: bold; border: 3px solid var(--text); background: white;
+        }
+        .Healthy .score-circle { border-color: var(--success); color: var(--success); }
+        .Watch .score-circle { border-color: var(--warning); color: var(--warning); }
+        .At.Risk .score-circle, .At-Risk .score-circle { border-color: var(--at-risk); color: var(--at-risk); }
+        .Critical .score-circle { border-color: var(--danger); color: var(--danger); }
+
+        .rules-list { font-size: 0.85rem; margin-top: 10px; }
+        .rules-list li { margin-left: 15px; margin-bottom: 3px; color: #444; }
+        .rules-list b { color: #222; }
+
+        .actions-list { margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.6); border-radius: 8px; font-size: 0.85rem;}
+        .actions-list strong { color: var(--danger); }
+        .actions-list ul { margin-left: 15px; margin-top: 5px; }
 
         .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; background: var(--bg); }
         
         .section-title { font-size: 0.9rem; font-weight: 800; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 1px; margin: 25px 0 12px 0; display: flex; align-items: center; }
         .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); margin-left: 15px; }
 
-        .metric { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--bg); font-size: 0.95rem; }
+        .metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--bg); font-size: 0.9rem; margin-bottom: 0px; }
         .metric:last-child { border-bottom: none; }
         .label { color: var(--text-secondary); font-weight: 500; }
         .val { font-weight: 700; color: var(--text); }
 
-        .disk-item { background: var(--bg); border-radius: 12px; padding: 15px; margin-bottom: 15px; border: 1px solid var(--border); }
-        .disk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .disk-drive { font-weight: 800; font-size: 1.1rem; }
+        .disk-item { background: var(--bg); border-radius: 12px; padding: 15px; margin-bottom: 10px; border: 1px solid var(--border); }
+        .disk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .disk-drive { font-weight: 800; font-size: 1rem; }
         
         .good { color: var(--success); }
         .warn { color: var(--warning); }
@@ -69,7 +98,7 @@
     <div class="container">
         <header>
             <h1>📊 Device Health Dashboard</h1>
-            <p>Live telemetry and predictive diagnostics</p>
+            <p>Live predictive maintenance diagnostics</p>
         </header>
 
         <div id="devicesContainer" class="devices-grid"></div>
@@ -82,7 +111,6 @@
     <script>
         function formatValue(val, type) {
             if (val === null || val === undefined) return null;
-            
             if (type === 'percent') {
                 let cls = val > 90 ? 'crit' : (val > 75 ? 'warn' : 'good');
                 return `<span class="${cls}">${val}%</span>`;
@@ -91,11 +119,7 @@
                 let cls = val > 75 ? 'crit' : (val > 60 ? 'warn' : 'good');
                 return `<span class="${cls}">${val}°C</span>`;
             }
-            if (type === 'status') {
-                let cls = (val === 'Healthy' || val === 'OK') ? 'good' : 'crit';
-                return `<span class="${cls}">${val}</span>`;
-            }
-            return val;
+            return typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(1) : val;
         }
 
         function renderMetric(label, value, type = null) {
@@ -110,50 +134,94 @@
         }
 
         function renderDevice(tag, data) {
-            const { cpu={}, memory={}, system={}, battery={}, disks=[] } = data;
+            const { cpu={}, memory={}, system={}, battery={}, disks=[], analysis=null } = data;
             
+            let analysisHtml = '';
+            if (analysis) {
+                const safeClass = analysis.risk_level.replace(" ", "-");
+                let rulesItems = analysis.triggered_rules.map(r => 
+                    `<li><b>${r.rule_id}</b>: ${r.label} (+${r.score_contribution}) - <i>${r.note}</i></li>`
+                ).join('');
+                
+                let bonusItems = (analysis.compound_bonuses || []).map(b => 
+                    `<li><b>${b.rule_id}</b>: ${b.label} (+${b.bonus})</li>`
+                ).join('');
+
+                let actions = analysis.recommended_actions.map(a => `<li>${a}</li>`).join('');
+
+                analysisHtml = `
+                    <div class="analyzer-banner ${safeClass}">
+                        <div class="score-circle">
+                            <span style="font-size: 1.5rem; line-height: 1;">${analysis.total_score}</span>
+                            <span style="font-size: 0.6rem; color: #777;">Score</span>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size: 1.1rem; font-weight: bold; margin-bottom: 4px;">${analysis.risk_level} Risk</div>
+                            <div style="font-size: 0.8rem; color: #555;">${analysis.summary}</div>
+                            ${ (rulesItems || bonusItems) ? `
+                                <ul class="rules-list">
+                                    ${rulesItems}
+                                    ${bonusItems}
+                                </ul>
+                            ` : '<div style="font-size:0.85rem; color:#666; margin-top:5px;">✅ All metrics excellent. No active rules triggered.</div>'}
+                            
+                            ${ actions ? `
+                                <div class="actions-list">
+                                    <strong>Recommended Actions:</strong>
+                                    <ul>${actions}</ul>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            } else {
+                analysisHtml = `
+                    <div class="analyzer-banner" style="background:#eee;">
+                        <span style="font-size:0.85rem;color:#777;">Analysis pending or unavailable.</span>
+                    </div>
+                `;
+            }
+
             let html = `
                 <div class="device-card">
                     <div class="device-header">
                         <div class="device-info">
                             <h2>${tag}</h2>
                             <div class="device-type">${data.device_type || 'Unknown'}</div>
-                            <div class="timestamp">Last seen: ${new Date(data.collected_at).toLocaleString()}</div>
+                            <div class="timestamp">Collected: ${new Date(data.collected_at).toLocaleString()}</div>
                         </div>
                     </div>
 
-                    <div class="section-title">System</div>
-                    ${renderMetric('OS Version', system.os_version)}
-                    ${renderMetric('Uptime', system.uptime_hours ? system.uptime_hours + ' hrs' : null)}
-                    ${renderMetric('Last Update', system.last_os_update)}
+                    ${analysisHtml}
 
-                    <div class="section-title">Performance</div>
-                    ${renderMetric('CPU Usage', cpu.usage_percent, 'percent')}
-                    ${renderMetric('CPU Temperature', cpu.temperature_celsius, 'temp')}
-                    ${renderMetric('Memory Usage', memory.usage_percent, 'percent')}
-                    ${renderMetric('Memory Available', memory.available_gb ? memory.available_gb + ' GB' : null)}
+                    <div style="display: flex; gap: 15px;">
+                        <div style="flex:1">
+                            <div class="section-title" style="margin-top:0;">System</div>
+                            ${renderMetric('Uptime', system.uptime_hours ? system.uptime_hours + ' hrs' : null)}
+                            ${renderMetric('Last Update', system.last_os_update)}
+                        </div>
+                        <div style="flex:1">
+                            <div class="section-title" style="margin-top:0;">Performance</div>
+                            ${renderMetric('CPU Usage', cpu.usage_percent, 'percent')}
+                            ${renderMetric('CPU Temp', cpu.temperature_celsius, 'temp')}
+                            ${renderMetric('RAM Usage', memory.usage_percent, 'percent')}
+                        </div>
+                    </div>
 
-                    ${battery && battery.charging_status ? `
-                        <div class="section-title">Power</div>
-                        ${renderMetric('Battery Health', battery.health_percent, 'percent')}
-                        ${renderMetric('Status', battery.charging_status)}
-                        ${renderMetric('Cycle Count', battery.cycle_count)}
-                    ` : ''}
-
-                    <div class="section-title">Storage</div>
+                    <div class="section-title">Storage & Drives</div>
                     ${disks.map(disk => `
                         <div class="disk-item">
                             <div class="disk-header">
-                                <span class="disk-drive">Drive ${disk.drive}</span>
+                                <span class="disk-drive">${disk.drive || 'Physical Drive'}</span>
                                 <span class="val">${formatValue(disk.usage_percent, 'percent')}</span>
                             </div>
-                            ${renderMetric('Model', disk.model)}
-                            ${renderMetric('Serial', disk.serial_number)}
-                            ${renderMetric('SMART Status', disk.smart_status, 'status')}
-                            ${renderMetric('Temperature', disk.temperature_celsius, 'temp')}
-                            ${renderMetric('Power On', disk.power_on_hours ? disk.power_on_hours + ' hrs' : null)}
-                            ${renderMetric('Wear Level', disk.wear_percent, 'percent')}
-                            ${disk.telemetry_note ? `<div style="font-size: 0.75rem; color: #888; margin-top: 10px; border-top: 1px solid #ddd; padding-top: 5px;">${disk.telemetry_note}</div>` : ''}
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 15px;">
+                                ${renderMetric('Temp', disk.temperature_celsius, 'temp')}
+                                ${renderMetric('Wear Level', disk.wear_percent, 'percent')}
+                                ${renderMetric('Read Err', disk.read_errors)}
+                                ${renderMetric('Write Err', disk.write_errors)}
+                                ${renderMetric('Power On', disk.power_on_hours ? disk.power_on_hours + 'h' : null)}
+                            </div>
                         </div>
                     `).join('')}
                 </div>
@@ -162,16 +230,20 @@
         }
 
         async function load() {
-            const r = await fetch('/api/devices');
-            const data = await r.json();
-            const container = document.getElementById('devicesContainer');
-            
-            if (Object.keys(data).length === 0) {
-                container.innerHTML = '<div class="no-devices">📡 Waiting for device telemetry... Run collector.py on a machine.</div>';
-            } else {
-                container.innerHTML = Object.entries(data)
-                    .map(([tag, snap]) => renderDevice(tag, snap))
-                    .join('');
+            try {
+                const r = await fetch('/api/devices');
+                const data = await r.json();
+                const container = document.getElementById('devicesContainer');
+                
+                if (Object.keys(data).length === 0) {
+                    container.innerHTML = '<div class="no-devices">📡 Waiting for device telemetry...<br><span style="font-size:0.8rem; margin-top:10px; display:inline-block;">Run <kbd>python collector.py</kbd> on a client machine.</span></div>';
+                } else {
+                    container.innerHTML = Object.entries(data)
+                        .map(([tag, snap]) => renderDevice(tag, snap))
+                        .join('');
+                }
+            } catch (err) {
+                console.error('Failed to load devices:', err);
             }
         }
 
