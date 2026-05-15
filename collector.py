@@ -301,7 +301,12 @@ def get_wmi_smart_attribute_map():
 def get_smartctl_rows():
     smartctl_path = shutil.which("smartctl")
     if not smartctl_path:
-        return []
+        import os
+        fallback_path = r"C:\Program Files\smartmontools\bin\smartctl.exe"
+        if os.path.exists(fallback_path):
+            smartctl_path = fallback_path
+        else:
+            return []
 
     try:
         scan_result = subprocess.run(
@@ -393,6 +398,20 @@ def get_smartctl_rows():
         if percentage_used is not None:
             wear_percent = max(0, 100 - percentage_used)
 
+        host_reads = to_int(nvme_health.get("host_reads"))
+        host_writes = to_int(nvme_health.get("host_writes"))
+        data_units_read = to_int(nvme_health.get("data_units_read"))
+        data_units_written = to_int(nvme_health.get("data_units_written"))
+
+        # ATA drives often store reads/writes in attributes 241 and 242 (or similar LBAs)
+        for attr in ata_table:
+            attr_id = to_int(attr.get("id"))
+            raw_value = to_int((attr.get("raw") or {}).get("value"))
+            if attr_id == 241 and data_units_written is None:
+                data_units_written = raw_value
+            elif attr_id == 242 and data_units_read is None:
+                data_units_read = raw_value
+
         rows.append(
             {
                 "disk_index": disk_index,
@@ -405,6 +424,10 @@ def get_smartctl_rows():
                 "write_errors": write_errors,
                 "power_on_hours": power_on_hours,
                 "wear_percent": wear_percent,
+                "host_reads": host_reads,
+                "host_writes": host_writes,
+                "data_units_read": data_units_read,
+                "data_units_written": data_units_written,
             }
         )
 
@@ -590,11 +613,11 @@ def get_disks():
             elif smart_status in ("Unknown", "OK", "Healthy"):
                 smart_status = smartctl_status
 
-        disk_temp = normalize_temperature(reliability.get("Temperature")) if reliability else None
+        disk_temp = normalize_temperature(smartctl.get("temperature_celsius")) if smartctl else None
+        if disk_temp is None:
+            disk_temp = normalize_temperature(reliability.get("Temperature")) if reliability else None
         if disk_temp is None:
             disk_temp = normalize_temperature(smart_attrs.get("temperature_celsius"))
-        if disk_temp is None and smartctl:
-            disk_temp = normalize_temperature(smartctl.get("temperature_celsius"))
         if disk_temp is None:
             disk_temp = psutil_temp_fallback
 
@@ -629,6 +652,11 @@ def get_disks():
         elif any(value is None for value in (disk_temp, read_errors, write_errors, power_on_hours)):
             telemetry_note = "Partial disk telemetry available."
 
+        host_reads = smartctl.get("host_reads") if smartctl else None
+        host_writes = smartctl.get("host_writes") if smartctl else None
+        data_units_read = smartctl.get("data_units_read") if smartctl else None
+        data_units_written = smartctl.get("data_units_written") if smartctl else None
+
         disks.append(
             {
                 "drive": partition.mountpoint,
@@ -641,12 +669,30 @@ def get_disks():
                 "serial_number": (disk_info.get("serial_number") if disk_info else None) or (smartctl.get("serial_number") if smartctl else None),
                 "power_on_hours": power_on_hours,
                 "wear_percent": wear_percent,
+                "host_reads": host_reads,
+                "host_writes": host_writes,
+                "data_units_read": data_units_read,
+                "data_units_written": data_units_written,
                 "predict_failure": predict_failure,
                 "telemetry_note": telemetry_note,
             }
         )
 
-    return disks
+    seen_serials = set()
+    unique_disks = []
+    
+    for disk in disks:
+        serial = disk.get("serial_number")
+        if serial:
+            if serial not in seen_serials:
+                seen_serials.add(serial)
+                unique_disks.append(disk)
+        else:
+            # If there's no serial number for some reason, don't drop it outright,
+            # or maybe just let it be added.
+            unique_disks.append(disk)
+
+    return unique_disks
 
 def get_system():
     uptime_seconds = psutil.boot_time()
