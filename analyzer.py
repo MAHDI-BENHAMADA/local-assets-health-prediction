@@ -1,62 +1,307 @@
-def calculate_device_health(telemetry: dict) -> dict:
-    """
-    Calculates a rule-based health score from 0 to 100 based on device telemetry.
-    This is the first basic version. We will add more rules (like temperatures, SMART errors) later.
-    """
-    score = 100
-    issues = []
+import json
+from datetime import datetime, timezone
 
-    # 1. CPU Checks
-    cpu_usage = telemetry.get('cpu_percent', 0)
-    if cpu_usage > 95:
-        score -= 20
-        issues.append("Critical: CPU usage is extremely high (>95%)")
-    elif cpu_usage > 85:
-        score -= 10
-        issues.append("Warning: CPU usage is high (>85%)")
+def parse_date(date_str):
+    if not date_str:
+        return None
+    try:
+        # Date format: "M/D/YYYY" or "M/D/YY"
+        return datetime.strptime(date_str, "%m/%d/%Y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        try:
+            # Also try without zero padding or two digit years via %Y if possible; let's stick to simple iso fallback
+            parts = date_str.split("/")
+            if len(parts) == 3:
+                return datetime(int(parts[2]), int(parts[0]), int(parts[1]), tzinfo=timezone.utc)
+            return datetime.fromisoformat(date_str)
+        except Exception:
+            return None
 
-    # 2. Memory (RAM) Checks
-    memory_percent = telemetry.get('memory_percent', 0)
-    if memory_percent > 95:
-        score -= 20
-        issues.append("Critical: Memory usage is nearly full (>95%)")
-    elif memory_percent > 85:
-        score -= 10
-        issues.append("Warning: Memory usage is high (>85%)")
-
-    # 3. Disk Space Checks
-    disk_percent = telemetry.get('disk_percent', 0)
-    if disk_percent > 95:
-        score -= 30
-        issues.append("Critical: Disk space is critically low (>95% used)")
-    elif disk_percent > 85:
-        score -= 15
-        issues.append("Warning: Disk space is running low (>85% used)")
-
-    # Ensure score doesn't drop below 0
-    score = max(0, score)
-
-    # Determine overall status classification
-    if score >= 80:
-        status = "Healthy"
-    elif score >= 50:
-        status = "Warning"
-    else:
-        status = "Critical"
-
-    return {
-        "health_score": score,
-        "status": status,
-        "issues": issues
-    }
-
-# Quick test to see how it works (you can remove this later)
-if __name__ == "__main__":
-    sample_telemetry = {
-        "cpu_percent": 88,     # Should trigger a Warning
-        "memory_percent": 60,  # Healthy
-        "disk_percent": 96     # Should trigger a Critical
-    }
+def calculate_device_health(snapshot: dict) -> dict:
+    total_score = 0
+    triggered_rules = []
+    recommended_actions = []
     
-    result = calculate_device_health(sample_telemetry)
-    print("Test Result:", result)
+    collected_at_str = snapshot.get("collected_at")
+    try:
+        collected_at = datetime.fromisoformat(collected_at_str)
+    except Exception:
+        collected_at = datetime.now(timezone.utc)
+        
+    disks = snapshot.get("disks", [])
+    
+    # Deduplicate disks by serial_number
+    seen_serials = set()
+    unique_disks = []
+    for disk in disks:
+        serial = disk.get("serial_number")
+        if serial:
+            if serial not in seen_serials:
+                seen_serials.add(serial)
+                unique_disks.append(disk)
+        else:
+            unique_disks.append(disk)
+            
+    # DISK Rules
+    has_high_disk_temp = False
+    has_low_wear = False
+    has_high_disk_usage = False
+    has_high_power_on_hours = False
+    
+    for disk in unique_disks:
+        drive_name = disk.get("drive", "Unknown")
+        
+        # D1
+        wear = disk.get("wear_percent")
+        if wear is not None:
+            if wear <= 10:
+                mult = 1.0; action = "Schedule SSD replacement within 30 days"
+            elif wear <= 20:
+                mult = 0.7; action = "Schedule SSD replacement within 30 days"
+            elif wear <= 40:
+                mult = 0.4; action = "Add SSD to replacement watchlist"
+                has_low_wear = True
+            else:
+                mult = 0.0; action = None
+            
+            if mult > 0:
+                total_score += 40 * mult
+                triggered_rules.append({"rule_id": "D1", "label": f"SSD Remaining Life", "value": wear, "score_contribution": 40 * mult, "note": f"{wear}% life remaining"})
+                if action and action not in recommended_actions:
+                    recommended_actions.append(action)
+            if wear <= 40: has_low_wear = True
+
+        # D2
+        predict_failure = disk.get("predict_failure")
+        if predict_failure is not None:
+            if predict_failure:
+                total_score += 45
+                triggered_rules.append({"rule_id": "D2", "label": f"SMART Failure Prediction", "value": predict_failure, "score_contribution": 45, "note": "SMART predicts failure"})
+                action = "IMMEDIATE: Back up data and replace SSD"
+                if action not in recommended_actions:
+                    recommended_actions.append(action)
+                    
+        # D3
+        usage = disk.get("usage_percent")
+        if usage is not None:
+            if usage >= 95: mult = 1.0
+            elif usage >= 90: mult = 0.6
+            elif usage >= 80: mult = 0.3
+            else: mult = 0.0
+                
+            if mult > 0:
+                total_score += 20 * mult
+                triggered_rules.append({"rule_id": "D3", "label": f"Disk Space Usage", "value": usage, "score_contribution": 20 * mult, "note": f"{usage}% used"})
+                if usage >= 90:
+                    action = "Free disk space — aim for at least 20% free"
+                    if action not in recommended_actions: recommended_actions.append(action)
+            if usage >= 90: has_high_disk_usage = True
+                
+        # D4
+        read_errors = disk.get("read_errors", 0) or 0
+        write_errors = disk.get("write_errors", 0) or 0
+        if read_errors > 0 or write_errors > 0:
+            total_score += 35
+            triggered_rules.append({"rule_id": "D4", "label": f"Read/Write Errors", "value": f"R:{read_errors} W:{write_errors}", "score_contribution": 35, "note": "I/O errors detected"})
+            action = "Run full SMART diagnostic — I/O errors detected"
+            if action not in recommended_actions: recommended_actions.append(action)
+                
+        # D5
+        disk_temp = disk.get("temperature_celsius")
+        if disk_temp is not None:
+            if disk_temp >= 60: mult = 1.0
+            elif disk_temp >= 50: mult = 0.5
+            else: mult = 0.0
+                
+            if mult > 0:
+                total_score += 25 * mult
+                triggered_rules.append({"rule_id": "D5", "label": f"Disk Temperature", "value": disk_temp, "score_contribution": 25 * mult, "note": f"{disk_temp}°C"})
+                if disk_temp >= 50:
+                    action = "Check drive ventilation and chassis airflow"
+                    if action not in recommended_actions: recommended_actions.append(action)
+            if disk_temp >= 50: has_high_disk_temp = True
+                
+        # D6
+        hours = disk.get("power_on_hours")
+        if hours is not None:
+            if hours >= 35000: mult = 1.0
+            elif hours >= 25000: mult = 0.6
+            elif hours >= 15000: mult = 0.3
+            else: mult = 0.0
+                
+            if mult > 0:
+                total_score += 30 * mult
+                triggered_rules.append({"rule_id": "D6", "label": f"Power-On Hours", "value": hours, "score_contribution": 30 * mult, "note": f"{hours} hours"})
+                if hours >= 25000:
+                    action = "Disk approaching end of rated lifetime"
+                    if action not in recommended_actions: recommended_actions.append(action)
+            if hours >= 15000: has_high_power_on_hours = True
+
+    # BATT
+    has_poor_battery_health = False
+    has_high_cycle_count = False
+    device_type = snapshot.get("device_type")
+    battery = snapshot.get("battery")
+    if device_type == "laptop" and battery is not None:
+        # B1
+        health = battery.get("health_percent")
+        if health is not None:
+            if health <= 40: mult = 1.0
+            elif health <= 60: mult = 0.6
+            elif health <= 75: mult = 0.3
+            else: mult = 0.0
+            if mult > 0:
+                total_score += 35 * mult
+                triggered_rules.append({"rule_id": "B1", "label": "Battery Health", "value": health, "score_contribution": 35 * mult, "note": f"{health}% health"})
+                if health <= 60:
+                    action = "Battery replacement recommended"
+                    if action not in recommended_actions: recommended_actions.append(action)
+            if health <= 60: has_poor_battery_health = True
+                
+        # B2
+        cycles = battery.get("cycle_count")
+        if cycles is not None:
+            if cycles >= 1000: mult = 1.0
+            elif cycles >= 700: mult = 0.6
+            elif cycles >= 500: mult = 0.3
+            else: mult = 0.0
+            if mult > 0:
+                total_score += 25 * mult
+                triggered_rules.append({"rule_id": "B2", "label": "Battery Cycle Count", "value": cycles, "score_contribution": 25 * mult, "note": f"{cycles} cycles"})
+                if cycles >= 700:
+                    action = "Battery near end of rated cycle life"
+                    if action not in recommended_actions: recommended_actions.append(action)
+            if cycles >= 500: has_high_cycle_count = True
+
+    # CPU
+    has_high_cpu_temp = False
+    cpu = snapshot.get("cpu", {})
+    cpu_temp = cpu.get("temperature_celsius")
+    if cpu_temp is not None:
+        if cpu_temp >= 95: mult = 1.0
+        elif cpu_temp >= 85: mult = 0.6
+        elif cpu_temp >= 75: mult = 0.3
+        else: mult = 0.0
+        if mult > 0:
+            total_score += 30 * mult
+            triggered_rules.append({"rule_id": "C1", "label": "CPU Temperature", "value": cpu_temp, "score_contribution": 30 * mult, "note": f"{cpu_temp}°C"})
+            if cpu_temp >= 85:
+                action = "Check CPU cooling — clean fan and reapply thermal paste"
+                if action not in recommended_actions: recommended_actions.append(action)
+        if cpu_temp >= 85: has_high_cpu_temp = True
+            
+    cpu_usage = cpu.get("usage_percent")
+    if cpu_usage is not None:
+        if cpu_usage >= 90:
+            total_score += 15
+            triggered_rules.append({"rule_id": "C2", "label": "CPU Usage", "value": cpu_usage, "score_contribution": 15, "note": f"{cpu_usage}% used"})
+            
+    throttling = cpu.get("throttling_events")
+    if throttling is not None:
+        if throttling > 10: mult = 1.0
+        elif throttling > 0: mult = 0.5
+        else: mult = 0.0
+        if mult > 0:
+            total_score += 20 * mult
+            triggered_rules.append({"rule_id": "C3", "label": "Throttling Events", "value": throttling, "score_contribution": 20 * mult, "note": f"{throttling} events"})
+            action = "CPU thermal throttling detected — inspect cooling"
+            if action not in recommended_actions: recommended_actions.append(action)
+
+    # MEM
+    mem = snapshot.get("memory", {})
+    mem_usage = mem.get("usage_percent")
+    if mem_usage is not None:
+        if mem_usage >= 95: mult = 1.0
+        elif mem_usage >= 85: mult = 0.5
+        else: mult = 0.0
+        if mult > 0:
+            total_score += 20 * mult
+            triggered_rules.append({"rule_id": "M1", "label": "RAM Usage", "value": mem_usage, "score_contribution": 20 * mult, "note": f"{mem_usage}% used"})
+            
+    mem_avail = mem.get("available_gb")
+    if mem_avail is not None:
+        if mem_avail < 0.5: mult = 1.0
+        elif mem_avail <= 1.0: mult = 0.5
+        else: mult = 0.0
+        if mult > 0:
+            total_score += 25 * mult
+            triggered_rules.append({"rule_id": "M2", "label": "Available RAM", "value": mem_avail, "score_contribution": 25 * mult, "note": f"{mem_avail:.2f} GB"})
+
+    # SYS
+    has_old_os = False
+    sys_info = snapshot.get("system", {})
+    last_update_str = sys_info.get("last_os_update")
+    if last_update_str:
+        last_update = parse_date(last_update_str)
+        if last_update:
+            days_ago = (collected_at.replace(tzinfo=None) - last_update.replace(tzinfo=None)).days
+            if days_ago > 180: mult = 1.0
+            elif days_ago >= 90: mult = 0.5
+            else: mult = 0.0
+            if mult > 0:
+                total_score += 20 * mult
+                triggered_rules.append({"rule_id": "S1", "label": "OS Update Age", "value": days_ago, "score_contribution": 20 * mult, "note": f"{days_ago} days ago"})
+                if days_ago > 180:
+                    action = "Apply pending OS updates immediately"
+                    if action not in recommended_actions: recommended_actions.append(action)
+            has_old_os = (days_ago > 180)
+                
+    uptime = sys_info.get("uptime_hours")
+    if uptime is not None:
+        if uptime >= 720: mult = 1.0
+        elif uptime >= 168: mult = 0.4
+        else: mult = 0.0
+        if mult > 0:
+            total_score += 15 * mult
+            triggered_rules.append({"rule_id": "S2", "label": "System Uptime", "value": uptime, "score_contribution": 15 * mult, "note": f"{uptime} hours"})
+            if uptime >= 720:
+                action = "Reboot machine to apply updates and clear memory"
+                if action not in recommended_actions: recommended_actions.append(action)
+
+    # COMPOUND
+    compound_bonuses = []
+    if has_high_cpu_temp and has_high_disk_temp:
+        total_score += 10
+        compound_bonuses.append({"rule_id": "X1", "label": "High CPU temp + High disk temp", "bonus": 10})
+    if has_low_wear and has_high_disk_usage:
+        total_score += 15
+        compound_bonuses.append({"rule_id": "X2", "label": "Low SSD life + High disk usage", "bonus": 15})
+    if has_high_power_on_hours and has_old_os:
+        total_score += 10
+        compound_bonuses.append({"rule_id": "X3", "label": "High disk power on hours + Old OS", "bonus": 10})
+    if has_poor_battery_health and has_high_cycle_count:
+        total_score += 15
+        compound_bonuses.append({"rule_id": "X4", "label": "Low battery health + High cycle count", "bonus": 15})
+
+    total_score = max(0, total_score)
+    
+    if total_score < 30: risk_level = "Healthy"
+    elif total_score < 60: risk_level = "Watch"
+    elif total_score < 90: risk_level = "At Risk"
+    else: risk_level = "Critical"
+        
+    return {
+        "asset_tag": snapshot.get("asset_tag", "UNKNOWN"),
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "total_score": total_score,
+        "risk_level": risk_level,
+        "triggered_rules": triggered_rules,
+        "compound_bonuses": compound_bonuses,
+        "recommended_actions": recommended_actions,
+        "summary": f"Device {snapshot.get('asset_tag', 'UNKNOWN')} scored {total_score} ({risk_level})"
+    }
+
+if __name__ == "__main__":
+    example = {
+      "asset_tag": "066256322857",
+      "collected_at": "2026-05-15T10:00:00Z",
+      "device_type": "laptop",
+      "cpu": {"usage_percent": 32.8, "temperature_celsius": 36.8, "throttling_events": None},
+      "memory": {"usage_percent": 67.1, "available_gb": 5.21},
+      "disks": [
+        {"drive": "C:", "usage_percent": 92.7, "smart_status": "OK", "read_errors": 0, "write_errors": 0, "temperature_celsius": 26.0, "power_on_hours": 1759, "wear_percent": 93, "predict_failure": False}
+      ],
+      "system": {"uptime_hours": 23.5, "last_os_update": "8/29/2025"},
+      "battery": {"health_percent": 83.3, "cycle_count": 455, "charging_status": "discharging"}
+    }
+    print(json.dumps(calculate_device_health(example), indent=2))
