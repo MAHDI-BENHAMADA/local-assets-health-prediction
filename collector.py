@@ -506,10 +506,19 @@ def derive_smart_status(base_status, reliability_row, predict_failure):
 
     return "Unknown"
 
-def get_cpu():
+# --- Sustained-load sampling config ---
+# Number of samples and interval between them for CPU/RAM averaging.
+# With defaults: 6 samples × 5 s = 30 s total window.
+# Increase SAMPLE_COUNT or SAMPLE_INTERVAL_SECONDS for a longer window.
+SAMPLE_COUNT = 6
+SAMPLE_INTERVAL_SECONDS = 5
+
+
+def _read_cpu_temp():
+    """Try three methods to read CPU temperature. Returns float or None."""
     temp = None
-    
-    # Method 1: Try WMI (MSAcpi_ThermalZoneTemperature)
+
+    # Method 1: WMI ACPI thermal zone
     # NOTE: Older machines/BIOS often return raw value 2731 (~0.05°C) as a
     # placeholder when the sensor isn't properly exposed. We require > 1°C
     # to filter out this well-known dummy value.
@@ -519,56 +528,106 @@ def get_cpu():
         if temps and hasattr(temps[0], 'CurrentTemperature'):
             raw_temp = temps[0].CurrentTemperature
             converted = (raw_temp / 10.0) - 273.15
-            # Reject dummy ACPI value (~0°C) and enforce sane range
             if 1 < converted <= 120:
                 temp = round(converted, 1)
     except Exception:
         pass
-    
-    # Method 2: Try Win32_PerfFormattedData (CPU temperature)
+
+    # Method 2: Win32_PerfFormattedData thermal zone
     if temp is None:
         try:
             w = wmi.WMI()
-            temps = w.Win32_PerfFormattedData_Counters_ThermalZoneInformation()
-            if temps and len(temps) > 0:
-                for t in temps:
+            tzones = w.Win32_PerfFormattedData_Counters_ThermalZoneInformation()
+            if tzones:
+                for t in tzones:
                     if hasattr(t, 'HighPrecisionTemperature'):
                         raw_temp = t.HighPrecisionTemperature
                         converted = (raw_temp / 10.0) - 273.15
-                        # Same guard: reject dummy ~0°C placeholder
                         if 1 < converted <= 120:
                             temp = round(converted, 1)
                             break
         except Exception:
             pass
-    
-    # Method 3: Fallback to psutil.sensors_temperatures()
+
+    # Method 3: psutil sensors fallback
     if temp is None:
         try:
-            temps = psutil.sensors_temperatures()
-            if temps:
-                for readings in temps.values():
-                    if readings:
-                        for reading in readings:
-                            if 0 <= reading.current <= 120:
-                                temp = round(reading.current, 1)
-                                break
+            all_temps = psutil.sensors_temperatures()
+            if all_temps:
+                for readings in all_temps.values():
+                    for reading in readings:
+                        if 0 <= reading.current <= 120:
+                            temp = round(reading.current, 1)
+                            break
                     if temp is not None:
                         break
         except Exception:
             pass
 
+    return temp
+
+
+def get_cpu():
+    """Return CPU stats averaged over multiple samples to smooth out short spikes.
+
+    A single-snapshot CPU reading is almost meaningless for maintenance
+    prediction — it varies wildly depending on what the user happens to be
+    doing at that exact second.  We instead poll SAMPLE_COUNT times with a
+    SAMPLE_INTERVAL_SECONDS gap and report the *average*, which is a much
+    better proxy for *sustained* load.
+    """
+    import time
+
+    usage_samples = []
+
+    print(f"[~] Sampling CPU/RAM usage ({SAMPLE_COUNT}×{SAMPLE_INTERVAL_SECONDS}s) …")
+    for i in range(SAMPLE_COUNT):
+        # cpu_percent with interval=SAMPLE_INTERVAL_SECONDS blocks for that
+        # duration internally — no extra sleep needed.
+        usage = psutil.cpu_percent(interval=SAMPLE_INTERVAL_SECONDS)
+        usage_samples.append(usage)
+        print(f"    sample {i+1}/{SAMPLE_COUNT}: CPU {usage:.1f}%")
+
+    avg_usage = round(sum(usage_samples) / len(usage_samples), 1)
+    peak_usage = max(usage_samples)
+
+    temp = _read_cpu_temp()
+
     return {
-        "usage_percent": psutil.cpu_percent(interval=1),
+        "usage_percent": avg_usage,          # average over the window
+        "usage_peak_percent": peak_usage,     # highest single sample (informational)
+        "usage_sample_count": SAMPLE_COUNT,
         "temperature_celsius": temp,
-        "throttling_events": None  # placeholder, hard to get without kernel access
+        "throttling_events": None  # hard to get without kernel access
     }
 
 def get_memory():
-    mem = psutil.virtual_memory()
+    """Return RAM stats averaged over the same sampling window as CPU.
+
+    Memory usage is also volatile: a browser with many tabs can push usage
+    briefly to 90%+ before the OS reclaims pages.  Averaging across the same
+    window gives a more stable signal and avoids false positives.
+    """
+    import time
+
+    usage_samples = []
+    avail_samples = []
+
+    for _ in range(SAMPLE_COUNT):
+        mem = psutil.virtual_memory()
+        usage_samples.append(mem.percent)
+        avail_samples.append(mem.available / (1024 ** 3))
+        time.sleep(SAMPLE_INTERVAL_SECONDS)
+
+    avg_usage = round(sum(usage_samples) / len(usage_samples), 1)
+    avg_avail = round(sum(avail_samples) / len(avail_samples), 2)
+    peak_usage = max(usage_samples)
+
     return {
-        "usage_percent": round(mem.percent, 1),
-        "available_gb": round(mem.available / (1024 ** 3), 2)
+        "usage_percent": avg_usage,          # average over the window
+        "usage_peak_percent": peak_usage,     # highest single sample (informational)
+        "available_gb": avg_avail,
+        "sample_count": SAMPLE_COUNT
     }
 
 def get_disks():

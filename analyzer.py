@@ -90,8 +90,8 @@ def calculate_device_health(snapshot: dict) -> dict:
             else: mult = 0.0
                 
             if mult > 0:
-                total_score += 20 * mult
-                triggered_rules.append({"rule_id": "D3", "label": f"Disk Space Usage", "value": usage, "score_contribution": 20 * mult, "note": f"{usage}% used"})
+                total_score += 10 * mult
+                triggered_rules.append({"rule_id": "D3", "label": f"Disk Space Usage", "value": usage, "score_contribution": 10 * mult, "note": f"{usage}% used"})
                 if usage >= 90:
                     action = "Free disk space — aim for at least 20% free"
                     if action not in recommended_actions: recommended_actions.append(action)
@@ -193,8 +193,8 @@ def calculate_device_health(snapshot: dict) -> dict:
     cpu_usage = cpu.get("usage_percent")
     if cpu_usage is not None:
         if cpu_usage >= 90:
-            total_score += 15
-            triggered_rules.append({"rule_id": "C2", "label": "CPU Usage", "value": cpu_usage, "score_contribution": 15, "note": f"{cpu_usage}% used"})
+            total_score += 8  # lowered: sustained high CPU is a workload signal, not a hardware failure
+            triggered_rules.append({"rule_id": "C2", "label": "CPU Usage (avg)", "value": cpu_usage, "score_contribution": 8, "note": f"{cpu_usage}% avg — may reflect heavy workload"})
             
     throttling = cpu.get("throttling_events")
     if throttling is not None:
@@ -215,8 +215,8 @@ def calculate_device_health(snapshot: dict) -> dict:
         elif mem_usage >= 85: mult = 0.5
         else: mult = 0.0
         if mult > 0:
-            total_score += 20 * mult
-            triggered_rules.append({"rule_id": "M1", "label": "RAM Usage", "value": mem_usage, "score_contribution": 20 * mult, "note": f"{mem_usage}% used"})
+            total_score += 10 * mult  # lowered: RAM pressure is mostly a workload signal
+            triggered_rules.append({"rule_id": "M1", "label": "RAM Usage (avg)", "value": mem_usage, "score_contribution": 10 * mult, "note": f"{mem_usage}% avg — may reflect active workload"})
             
     mem_avail = mem.get("available_gb")
     if mem_avail is not None:
@@ -224,8 +224,8 @@ def calculate_device_health(snapshot: dict) -> dict:
         elif mem_avail <= 1.0: mult = 0.5
         else: mult = 0.0
         if mult > 0:
-            total_score += 25 * mult
-            triggered_rules.append({"rule_id": "M2", "label": "Available RAM", "value": mem_avail, "score_contribution": 25 * mult, "note": f"{mem_avail:.2f} GB"})
+            total_score += 12 * mult  # lowered: low available RAM can be transient
+            triggered_rules.append({"rule_id": "M2", "label": "Available RAM (avg)", "value": mem_avail, "score_contribution": 12 * mult, "note": f"{mem_avail:.2f} GB avg available"})
 
     # SYS
     has_old_os = False
