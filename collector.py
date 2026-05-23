@@ -15,7 +15,18 @@ TEMP_MAX_C = 120.0
 POWERSHELL_TIMEOUT_SECONDS = 8
 
 def get_asset_tag():
-    """Retrieve the actual asset tag from system BIOS via WMI"""
+    """Retrieve the actual asset tag from agent_config.json, fallback to system BIOS via WMI"""
+    import os
+    config_path = os.path.join(os.path.dirname(__file__), "agent_config.json")
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                if config.get("asset_tag"):
+                    return config["asset_tag"].strip()
+    except Exception as e:
+        print(f"Error reading agent_config.json: {e}")
+
     try:
         w = wmi.WMI()
         system_enclosure = w.Win32_SystemEnclosure()

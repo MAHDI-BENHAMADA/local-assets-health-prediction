@@ -8,6 +8,7 @@ timeout /t 3 /nobreak > NUL
 echo Starting Collector Loop...
 :loop
 python collector.py
+python sync_service.py
 echo.
 echo Waiting 5 seconds before next collection...
 timeout /t 5 /nobreak > NUL
