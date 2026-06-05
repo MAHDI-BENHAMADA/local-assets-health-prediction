@@ -1,4 +1,5 @@
 {
-  "asset_tag": "TEST-EXE-ASSET",
-  "server_url": "http://localhost:5000/api/report"
+  "asset_tag": "mahdi",
+  "server_url": "http://192.168.1.159:5000/api/report",
+  "check_services": false
 }
