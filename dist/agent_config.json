@@ -1,0 +1,4 @@
+{
+  "asset_tag": "TEST-EXE-ASSET",
+  "server_url": "http://localhost:5000/api/report"
+}

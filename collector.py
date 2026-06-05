@@ -9,9 +9,10 @@ import socket
 import time
 from datetime import datetime, timezone
 
-# --- CONFIG ---
-SERVER_URL = "http://localhost:5000/api/report"  # Change to your server address if running remotely
-SEND_TO_SERVER = True  # Set to False to only print to terminal
+# --- DEFAULT CONFIG ---
+SERVER_URL = "http://localhost:5000/api/report"
+SEND_TO_SERVER = True
+
 TEMP_MIN_C = 0.0
 TEMP_MAX_C = 120.0
 POWERSHELL_TIMEOUT_SECONDS = 8
@@ -21,6 +22,10 @@ def get_asset_tag():
     import os
     config_path = os.path.join(os.path.dirname(__file__), "agent_config.json")
     try:
+        # For PyInstaller compatibility, also check current working directory
+        if not os.path.exists(config_path):
+            config_path = "agent_config.json"
+            
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
                 config = json.load(f)
@@ -28,6 +33,7 @@ def get_asset_tag():
                     return config["asset_tag"].strip()
     except Exception as e:
         print(f"Error reading agent_config.json: {e}")
+
 
     try:
         w = wmi.WMI()
@@ -960,7 +966,28 @@ def send_to_server(snapshot):
     except Exception as e:
         print(f"[!] Error sending data: {e}")
 
+def load_server_url():
+    """Override SERVER_URL if specified in agent_config.json"""
+    import os
+    global SERVER_URL
+    config_path = os.path.join(os.path.dirname(__file__), "agent_config.json")
+    try:
+        if not os.path.exists(config_path):
+            config_path = "agent_config.json"
+            
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                if config.get("server_url"):
+                    SERVER_URL = config["server_url"].strip()
+    except Exception:
+        pass
+
 if __name__ == "__main__":
+    load_server_url()
     snapshot = collect()
     print(json.dumps(snapshot, indent=2))
     send_to_server(snapshot)
+    
+    print("\n" + "="*50)
+    input("Scan complete. Press Enter to exit...")
