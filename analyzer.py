@@ -258,6 +258,50 @@ def calculate_device_health(snapshot: dict) -> dict:
                 action = "Reboot machine to apply updates and clear memory"
                 if action not in recommended_actions: recommended_actions.append(action)
 
+    # SERVICES
+    has_down_services = False
+    down_service_count = 0
+    services = snapshot.get("services", [])
+    
+    for svc in services:
+        name = svc.get("name", "Unknown Service")
+        status = svc.get("status")
+        resp_time = svc.get("response_time_ms")
+        cpu_usage = svc.get("process_cpu_percent")
+        mem_usage = svc.get("process_memory_mb")
+        
+        # SV1: Service is DOWN
+        if status == "down":
+            total_score += 50
+            triggered_rules.append({"rule_id": "SV1", "label": f"{name} is Offline", "value": "down", "score_contribution": 50, "note": "Service port is unreachable"})
+            action = f"Restart {name} immediately"
+            if action not in recommended_actions: recommended_actions.append(action)
+            has_down_services = True
+            down_service_count += 1
+            
+        # SV2: Service is very slow (degraded)
+        elif resp_time is not None and resp_time > 2000:
+            mult = 1.0 if resp_time > 5000 else 0.5
+            total_score += 20 * mult
+            triggered_rules.append({"rule_id": "SV2", "label": f"{name} is Degraded", "value": f"{resp_time}ms", "score_contribution": 20 * mult, "note": "Service responding very slowly"})
+            action = f"Investigate performance of {name}"
+            if action not in recommended_actions: recommended_actions.append(action)
+
+        # SV3: Memory Leak Detection
+        if mem_usage is not None and mem_usage > 1024: # Over 1GB RAM for a single service
+            mult = 1.0 if mem_usage > 2048 else 0.5
+            total_score += 25 * mult
+            triggered_rules.append({"rule_id": "SV3", "label": f"{name} High Memory", "value": f"{mem_usage} MB", "score_contribution": 25 * mult, "note": "Potential memory leak detected"})
+            action = f"Check {name} for memory leaks"
+            if action not in recommended_actions: recommended_actions.append(action)
+
+        # SV4: CPU Spike / Saturation
+        if cpu_usage is not None and cpu_usage > 80:
+            total_score += 15
+            triggered_rules.append({"rule_id": "SV4", "label": f"{name} CPU Spike", "value": f"{cpu_usage}%", "score_contribution": 15, "note": "Service is maxing out CPU"})
+            action = f"Monitor {name} for high load"
+            if action not in recommended_actions: recommended_actions.append(action)
+
     # COMPOUND
     compound_bonuses = []
     if has_high_cpu_temp and has_high_disk_temp:
@@ -272,6 +316,9 @@ def calculate_device_health(snapshot: dict) -> dict:
     if has_poor_battery_health and has_high_cycle_count:
         total_score += 15
         compound_bonuses.append({"rule_id": "X4", "label": "Low battery health + High cycle count", "bonus": 15})
+    if down_service_count > 1:
+        total_score += 20
+        compound_bonuses.append({"rule_id": "X5", "label": "Multiple critical services down", "bonus": 20})
 
     total_score = max(0, total_score)
     
@@ -302,6 +349,10 @@ if __name__ == "__main__":
         {"drive": "C:", "usage_percent": 92.7, "smart_status": "OK", "read_errors": 0, "write_errors": 0, "temperature_celsius": 26.0, "power_on_hours": 1759, "wear_percent": 93, "predict_failure": False}
       ],
       "system": {"uptime_hours": 23.5, "last_os_update": "8/29/2025"},
-      "battery": {"health_percent": 83.3, "cycle_count": 455, "charging_status": "discharging"}
+      "battery": {"health_percent": 83.3, "cycle_count": 455, "charging_status": "discharging"},
+      "services": [
+        {"name": "MySQL", "status": "up", "response_time_ms": 12.4},
+        {"name": "ITAM API (Node.js)", "status": "down", "response_time_ms": None}
+      ]
     }
     print(json.dumps(calculate_device_health(example), indent=2))
