@@ -278,18 +278,27 @@ def calculate_device_health(snapshot: dict) -> dict:
             if action not in recommended_actions: recommended_actions.append(action)
             has_down_services = True
             down_service_count += 1
+        if status == "up":
+            # SV_INFO: Service is UP (Informational for UI, 0 points)
+            triggered_rules.append({
+                "rule_id": "SV_INFO",
+                "label": name,
+                "value": "up",
+                "score_contribution": 0,
+                "note": f"Running (Latency: {resp_time}ms, RAM: {mem_usage}MB)"
+            })
             
         # SV2: Service is very slow (degraded)
-        elif resp_time is not None and resp_time > 2000:
+        if resp_time is not None and resp_time > 2000:
             mult = 1.0 if resp_time > 5000 else 0.5
             total_score += 20 * mult
             triggered_rules.append({"rule_id": "SV2", "label": f"{name} is Degraded", "value": f"{resp_time}ms", "score_contribution": 20 * mult, "note": "Service responding very slowly"})
             action = f"Investigate performance of {name}"
             if action not in recommended_actions: recommended_actions.append(action)
 
-        # SV3: Memory Leak Detection
-        if mem_usage is not None and mem_usage > 1024: # Over 1GB RAM for a single service
-            mult = 1.0 if mem_usage > 2048 else 0.5
+        # SV3: Memory Leak Detection (TEMPORARILY LOWERED FOR DEMO)
+        if mem_usage is not None and mem_usage > 50: # Trigger at 50MB for demo
+            mult = 1.0 if mem_usage > 100 else 0.5
             total_score += 25 * mult
             triggered_rules.append({"rule_id": "SV3", "label": f"{name} High Memory", "value": f"{mem_usage} MB", "score_contribution": 25 * mult, "note": "Potential memory leak detected"})
             action = f"Check {name} for memory leaks"
