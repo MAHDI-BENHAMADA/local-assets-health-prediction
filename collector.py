@@ -932,6 +932,81 @@ def get_services():
         
     return services
 
+def get_services():
+    """Probe local services and extract predictive process metrics (CPU/RAM)"""
+    services = []
+    
+    # Define the services we care about and how to identify their processes
+    service_defs = [
+        {"name": "MySQL", "type": "tcp", "host": "127.0.0.1", "port": 3306, "process_name": "mysqld"},
+        {"name": "ITAM API (Node.js)", "type": "tcp", "host": "127.0.0.1", "port": 3000, "process_name": "node", "cmd_keyword": "server.js"},
+        {"name": "Prediction Engine (Flask)", "type": "tcp", "host": "127.0.0.1", "port": 5000, "process_name": "python", "cmd_keyword": "server.py"}
+    ]
+    
+    # Pre-scan running processes once to avoid high CPU usage
+    found_procs = {}
+    for proc in psutil.process_iter(['name', 'cmdline']):
+        try:
+            name = proc.info['name'].lower()
+            cmdline = proc.info['cmdline'] or []
+            cmd_str = " ".join(cmdline).lower()
+            
+            for svc in service_defs:
+                svc_name = svc["name"]
+                if svc_name in found_procs:
+                    continue # Already found this service's process
+                    
+                p_name = svc["process_name"].lower()
+                
+                # If process name matches (e.g. "node.exe")
+                if p_name in name:
+                    if "cmd_keyword" in svc:
+                        # Ensure it's the right Node/Python script
+                        if svc["cmd_keyword"].lower() in cmd_str:
+                            found_procs[svc_name] = proc
+                    else:
+                        found_procs[svc_name] = proc
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+            
+    for svc in service_defs:
+        svc_name = svc["name"]
+        result = {
+            "name": svc_name,
+            "status": "down",
+            "response_time_ms": None,
+            "process_cpu_percent": None,
+            "process_memory_mb": None,
+            "error": None
+        }
+        
+        # 1. TCP Port Health Check
+        start_time = time.time()
+        if svc["type"] == "tcp":
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(2.0)
+                    s.connect((svc["host"], svc["port"]))
+                result["status"] = "up"
+                result["response_time_ms"] = round((time.time() - start_time) * 1000, 1)
+            except Exception as e:
+                result["error"] = "Port unreachable"
+                
+        # 2. Predictive Process Metrics
+        if svc_name in found_procs:
+            p = found_procs[svc_name]
+            try:
+                # Interval=0.1 takes a fraction of a second to measure actual CPU load
+                result["process_cpu_percent"] = p.cpu_percent(interval=0.1)
+                # Convert bytes to Megabytes
+                result["process_memory_mb"] = round(p.memory_info().rss / (1024 * 1024), 1)
+            except:
+                pass
+                
+        services.append(result)
+        
+    return services
+
 def collect():
     device_type = get_device_type()
 
