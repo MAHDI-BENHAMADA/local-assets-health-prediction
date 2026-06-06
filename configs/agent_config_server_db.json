@@ -1,7 +1,7 @@
 {
   "_comment": "Use this config on the VMware Database Server VM. Services are probed for health and resource usage.",
   "asset_tag": "VM-DB-SERVER-01",
-  "server_url": "http://192.168.1.159:5000/api/report",
+  "server_url": "http://10.184.37.154:5000/api/report",
   "services": [
     { "name": "MySQL (Billing DB)",    "host": "127.0.0.1", "port": 3306, "process_name": "mysqld" },
     { "name": "Redis (Session Cache)", "host": "127.0.0.1", "port": 6379, "process_name": "redis-server" },
