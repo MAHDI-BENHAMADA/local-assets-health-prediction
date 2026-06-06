@@ -296,9 +296,9 @@ def calculate_device_health(snapshot: dict) -> dict:
             action = f"Investigate performance of {name}"
             if action not in recommended_actions: recommended_actions.append(action)
 
-        # SV3: Memory Leak Detection (TEMPORARILY LOWERED FOR DEMO)
-        if mem_usage is not None and mem_usage > 50: # Trigger at 50MB for demo
-            mult = 1.0 if mem_usage > 100 else 0.5
+        # SV3: Memory Leak Detection (1024 MB threshold for Server Services)
+        if mem_usage is not None and mem_usage > 1024:
+            mult = 1.0 if mem_usage > 2048 else 0.5
             total_score += 25 * mult
             triggered_rules.append({"rule_id": "SV3", "label": f"{name} High Memory", "value": f"{mem_usage} MB", "score_contribution": 25 * mult, "note": "Potential memory leak detected"})
             action = f"Check {name} for memory leaks"

@@ -5,7 +5,7 @@ import time
 import storage
 
 # Configuration
-ITAM_SERVER_URL = "http://localhost:3000/api/telemetry/sync"
+ITAM_SERVER_URL = "http://10.184.37.154:3000/api/telemetry/sync"
 ITAM_API_KEY = "default_itam_agent_key"
 BATCH_SIZE = 50
 
@@ -60,4 +60,10 @@ def sync_labels():
             break # stop processing batches if server is down
 
 if __name__ == "__main__":
-    sync_labels()
+    print("Starting continuous sync service. Press Ctrl+C to stop.")
+    try:
+        while True:
+            sync_labels()
+            time.sleep(15) # Check for new data every 15 seconds
+    except KeyboardInterrupt:
+        print("\nSync service stopped.")

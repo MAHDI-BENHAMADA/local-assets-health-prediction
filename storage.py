@@ -31,6 +31,21 @@ def init_db():
     conn.commit()
     conn.close()
 
+def cleanup_old_data():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    # Log Rotation: Keep only the 5,000 most recent records to prevent infinite DB growth
+    cursor.execute("""
+        DELETE FROM snapshots 
+        WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT 5000)
+    """)
+    cursor.execute("""
+        DELETE FROM labels 
+        WHERE id NOT IN (SELECT id FROM labels ORDER BY id DESC LIMIT 5000)
+    """)
+    conn.commit()
+    conn.close()
+
 def save_snapshot(snapshot: dict):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -44,6 +59,9 @@ def save_snapshot(snapshot: dict):
     ))
     conn.commit()
     conn.close()
+    
+    # Run automatic pruning
+    cleanup_old_data()
     print(f"[+] Snapshot saved for {snapshot['asset_tag']} at {snapshot['collected_at']}")
 
 def get_unsynced_labels():
