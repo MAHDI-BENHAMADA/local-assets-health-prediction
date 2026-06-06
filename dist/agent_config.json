@@ -1,0 +1,5 @@
+{
+  "asset_tag": "mahdi",
+  "server_url": "http://192.168.1.159:5000/api/report",
+  "check_services": false
+}
