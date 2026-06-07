@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 """
 collector_linux.py — ITAM Predictive Health Collector (Linux/Ubuntu Server)
 Collects hardware telemetry and service health, sends to central ITAM server.
@@ -22,7 +25,7 @@ SAMPLE_INTERVAL = 2  # seconds
 # ── Agent Config ─────────────────────────────────────────────────────────────
 def load_config():
     """Load agent_config.json from script directory or cwd."""
-    for path in [os.path.join(os.path.dirname(__file__), "agent_config.json"), "agent_config.json"]:
+    for path in [os.path.join(os.path.dirname(__file__), os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json")), os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json")]:
         if os.path.exists(path):
             try:
                 with open(path) as f:
@@ -329,9 +332,13 @@ if __name__ == "__main__":
     print(f"  Server URL: {SERVER_URL}")
     print("=" * 55)
 
-    snapshot = collect()
-    print("\n[Snapshot JSON]")
-    print(json.dumps(snapshot, indent=2))
-    print("\n[Sending to ITAM server...]")
-    send_to_server(snapshot)
-    print("\nDone.")
+    while True:
+        snapshot = collect()
+        print("\n[Snapshot JSON]")
+        # print(json.dumps(snapshot, indent=2))  # Optional: comment out to save log space
+        print(f"\n[{datetime.now().isoformat()}] Sending to ITAM server...")
+        send_to_server(snapshot)
+        
+        # Wait 5 seconds before the next collection cycle
+        time.sleep(5)
+

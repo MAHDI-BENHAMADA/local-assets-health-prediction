@@ -46,16 +46,35 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# 4. Reload systemd and start services
-echo "⚡ Starting background services..."
+# 4. Create the ITAM Collector Service (replaces cron)
+echo "⚙️ Creating Edge Collector Service..."
+cat <<EOF | sudo tee /etc/systemd/system/itam-collector.service
+[Unit]
+Description=ITAM Edge Collector Agent
+After=network.target itam-server.service
+
+[Service]
+ExecStart=$PYTHON_BIN $APP_DIR/collector_linux.py
+WorkingDirectory=$APP_DIR
+User=djezzy
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 5. Reload systemd and start all services
+echo "⚡ Starting all background services..."
 sudo systemctl daemon-reload
 sudo systemctl enable itam-server.service
 sudo systemctl enable itam-sync.service
+sudo systemctl enable itam-collector.service
 sudo systemctl start itam-server.service
 sudo systemctl start itam-sync.service
+sudo systemctl start itam-collector.service
 
-# 5. Set up the Cron job for the collector (runs every minute)
-echo "⏱️ Configuring collector cron job..."
-(crontab -l 2>/dev/null | grep -v "collector_linux.py"; echo "* * * * * $PYTHON_BIN $APP_DIR/collector_linux.py") | crontab -
+# Remove old cron job if it exists
+crontab -l 2>/dev/null | grep -v "collector_linux.py" | crontab -
 
-echo "✅ Deployment Complete! The ITAM agent is now running permanently in the background."
+echo "✅ Deployment Complete! The ITAM agent, sync, and high-frequency collector are now running permanently in the background."

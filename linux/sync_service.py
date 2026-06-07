@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import urllib.request
 import urllib.parse
 import json
@@ -5,7 +8,7 @@ import time
 import storage
 
 # Configuration
-ITAM_SERVER_URL = "http://10.184.37.154:3000/api/telemetry/sync"
+ITAM_SERVER_URL = "http://192.168.1.159:3000/api/telemetry/sync"
 ITAM_API_KEY = "default_itam_agent_key"
 BATCH_SIZE = 50
 
@@ -67,3 +70,4 @@ if __name__ == "__main__":
             time.sleep(15) # Check for new data every 15 seconds
     except KeyboardInterrupt:
         print("\nSync service stopped.")
+

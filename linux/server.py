@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask, render_template, jsonify, request
 import storage
 import analyzer
@@ -58,3 +61,4 @@ def receive_report():
 if __name__ == '__main__':
     # host='0.0.0.0' allows external devices on the same network to connect
     app.run(host='0.0.0.0', port=5000, debug=False)
+
