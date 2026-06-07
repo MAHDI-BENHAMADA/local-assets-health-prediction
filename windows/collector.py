@@ -121,6 +121,7 @@ def run_powershell_json(script):
             text=True,
             timeout=POWERSHELL_TIMEOUT_SECONDS,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
@@ -334,6 +335,7 @@ def get_smartctl_rows():
             text=True,
             timeout=POWERSHELL_TIMEOUT_SECONDS,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
@@ -357,6 +359,7 @@ def get_smartctl_rows():
                 text=True,
                 timeout=POWERSHELL_TIMEOUT_SECONDS,
                 check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
