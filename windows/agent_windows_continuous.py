@@ -46,11 +46,11 @@ def main():
             # 3. Format Payload for Node.js
             payload = [{
                 "asset_tag": snapshot.get("asset_tag", "UNKNOWN"),
-                "scored_at": health_data["scored_at"],
-                "risk_score": health_data["risk_score"],
-                "risk_level": health_data["risk_level"],
-                "triggered_rules": health_data["triggered_rules"],
-                "recommended_action": health_data["recommended_actions"][0] if health_data["recommended_actions"] else None
+                "scored_at": health_data.get("evaluated_at", snapshot.get("collected_at")),
+                "risk_score": health_data.get("total_score", 0),
+                "risk_level": health_data.get("risk_level", "Healthy"),
+                "triggered_rules": health_data.get("triggered_rules", []),
+                "recommended_action": health_data.get("recommended_actions")[0] if health_data.get("recommended_actions") else None
             }]
             
             # 4. Push directly to Central Node.js Server
@@ -62,7 +62,9 @@ def main():
             try:
                 with urllib.request.urlopen(req, timeout=10) as response:
                     if response.status == 200:
-                        print(f"[{health_data['scored_at']}] Synced successfully! (Risk: {health_data['risk_score']})")
+                        timestamp = health_data.get('evaluated_at', 'Now')
+                        score = health_data.get('total_score', 0)
+                        print(f"[{timestamp}] Synced successfully! (Risk: {score})")
                     else:
                         print(f"Failed to sync. Status: {response.status}")
             except Exception as e:
