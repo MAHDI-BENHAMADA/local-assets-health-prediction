@@ -15,7 +15,20 @@ ITAM_SERVER_URL = "http://192.168.1.159:3000/api/telemetry/sync"
 ITAM_API_KEY = "default_itam_agent_key"
 POLL_INTERVAL = 10
 
+def load_server_url():
+    global ITAM_SERVER_URL
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json")
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                if config.get("server_url"):
+                    ITAM_SERVER_URL = config["server_url"].strip()
+    except Exception:
+        pass
+
 def main():
+    load_server_url()
     print(f"Starting ITAM Windows Agent...")
     print(f"Target Server: {ITAM_SERVER_URL}")
     print("Running continuously in the background. Press Ctrl+C to stop (if running in terminal).")
