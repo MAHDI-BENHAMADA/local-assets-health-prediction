@@ -860,11 +860,7 @@ def get_battery(device_type):
 def load_agent_config():
     """Load full agent_config.json, checking script dir then cwd."""
     import os
-<<<<<<< HEAD:windows/collector.py
-    for path in [os.path.join(os.path.dirname(__file__), os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json")), os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json")]:
-=======
-    for path in [os.path.join(os.path.dirname(__file__), "agent_config.json"), "agent_config.json"]:
->>>>>>> a69b4fcad5a3b8665cbbd4a3d94facfaff9e60ce:collector.py
+    for path in [os.path.join(os.path.dirname(__file__), "agent_config.json"), os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json"), "agent_config.json"]:
         if os.path.exists(path):
             try:
                 with open(path, "r") as f:
@@ -996,17 +992,12 @@ def load_server_url():
     """Override SERVER_URL if specified in agent_config.json"""
     import os
     global SERVER_URL
-<<<<<<< HEAD:windows/collector.py
-    config_path = os.path.join(os.path.dirname(__file__), os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json"))
-    try:
-        if not os.path.exists(config_path):
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json")
-=======
     config_path = os.path.join(os.path.dirname(__file__), "agent_config.json")
+    if not os.path.exists(config_path):
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json")
     try:
         if not os.path.exists(config_path):
             config_path = "agent_config.json"
->>>>>>> a69b4fcad5a3b8665cbbd4a3d94facfaff9e60ce:collector.py
             
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
