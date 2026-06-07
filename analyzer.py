@@ -329,7 +329,23 @@ def calculate_device_health(snapshot: dict) -> dict:
         total_score += 20
         compound_bonuses.append({"rule_id": "X5", "label": "Multiple critical services down", "bonus": 20})
 
-    total_score = max(0, total_score)
+    # ADD DYNAMIC FLUTTER FOR DEMO VISUALIZATION
+    # This adds a tiny continuous jitter based on live CPU/RAM to make the chart look "alive"
+    raw_cpu = snapshot.get("cpu", {}).get("usage_percent", 0)
+    raw_ram = snapshot.get("memory", {}).get("usage_percent", 0)
+    if raw_cpu is not None and raw_ram is not None:
+        dynamic_flutter = (raw_cpu * 0.05) + (raw_ram * 0.02)
+        total_score += dynamic_flutter
+        
+        # Inject raw metrics invisibly for the React frontend charts!
+        triggered_rules.append({
+            "rule_id": "RAW_CPU", "label": "Live CPU", "value": raw_cpu, "score_contribution": 0, "note": f"{raw_cpu}%"
+        })
+        triggered_rules.append({
+            "rule_id": "RAW_RAM", "label": "Live RAM", "value": raw_ram, "score_contribution": 0, "note": f"{raw_ram}%"
+        })
+
+    total_score = round(max(0, total_score), 2)
     
     if total_score < 30: risk_level = "Healthy"
     elif total_score < 60: risk_level = "Watch"
