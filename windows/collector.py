@@ -526,11 +526,9 @@ def derive_smart_status(base_status, reliability_row, predict_failure):
     return "Unknown"
 
 # --- Sustained-load sampling config ---
-# Number of samples and interval between them for CPU/RAM averaging.
-# With defaults: 6 samples × 5 s = 30 s total window.
-# Increase SAMPLE_COUNT or SAMPLE_INTERVAL_SECONDS for a longer window.
-SAMPLE_COUNT = 6
-SAMPLE_INTERVAL_SECONDS = 5
+# Speeding this up for the live demo to reduce wait time!
+SAMPLE_COUNT = 2
+SAMPLE_INTERVAL_SECONDS = 2
 
 
 def _read_cpu_temp():
