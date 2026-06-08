@@ -8,7 +8,7 @@ import time
 import storage
 
 # Configuration
-ITAM_SERVER_URL = "http://192.168.1.159:3000/api/telemetry/sync"
+ITAM_SERVER_URL = "http://10.96.5.155:3000/api/telemetry/sync"
 ITAM_API_KEY = "default_itam_agent_key"
 BATCH_SIZE = 50
 

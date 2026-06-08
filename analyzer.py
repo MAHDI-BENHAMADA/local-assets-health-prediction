@@ -272,8 +272,8 @@ def calculate_device_health(snapshot: dict) -> dict:
         
         # SV1: Service is DOWN
         if status == "down":
-            total_score += 50
-            triggered_rules.append({"rule_id": "SV1", "label": f"{name} is Offline", "value": "down", "score_contribution": 50, "note": "Service port is unreachable"})
+            total_score += 100
+            triggered_rules.append({"rule_id": "SV1", "label": f"{name} is Offline", "value": "down", "score_contribution": 100, "note": "Service port is unreachable"})
             action = f"Restart {name} immediately"
             if action not in recommended_actions: recommended_actions.append(action)
             has_down_services = True
@@ -345,7 +345,7 @@ def calculate_device_health(snapshot: dict) -> dict:
             "rule_id": "RAW_RAM", "label": "Live RAM", "value": raw_ram, "score_contribution": 0, "note": f"{raw_ram}%"
         })
 
-    total_score = round(max(0, total_score), 2)
+    total_score = round(min(100, max(0, total_score)), 2)
     
     if total_score < 30: risk_level = "Healthy"
     elif total_score < 60: risk_level = "Watch"
