@@ -8,12 +8,34 @@ import time
 import storage
 
 # Configuration
-ITAM_SERVER_URL = "http://10.96.5.155:3000/api/telemetry/sync"
+DEFAULT_ITAM_SERVER_URL = "http://192.168.1.159:3000/api/telemetry/sync"
 ITAM_API_KEY = "default_itam_agent_key"
 BATCH_SIZE = 50
 
+def load_itam_server_url():
+    config_paths = [
+        os.path.join(os.path.dirname(__file__), "agent_config.json"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_config.json"),
+        "agent_config.json"
+    ]
+    for path in config_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    config = json.load(f)
+                    if "itam_server_url" in config:
+                        return config["itam_server_url"].strip()
+                    # Secondary fallback: if server_url contains port 3000
+                    if "server_url" in config and ":3000" in config["server_url"]:
+                        return config["server_url"].strip()
+            except Exception as e:
+                print(f"Error reading config in sync service: {e}")
+    return DEFAULT_ITAM_SERVER_URL
+
+
 def sync_labels():
-    print("Starting sync to ITAM server...")
+    itam_server_url = load_itam_server_url()
+    print(f"Starting sync to ITAM server ({itam_server_url})...")
     
     # 1. Fetch unsynced labels from local DB
     unsynced = storage.get_unsynced_labels()
@@ -21,7 +43,7 @@ def sync_labels():
     if not unsynced:
         print("No new labels to sync.")
         return
-
+ 
     print(f"Found {len(unsynced)} unsynced labels.")
     
     # Process in batches
@@ -41,13 +63,13 @@ def sync_labels():
                 "triggered_rules": json.loads(row[5]) if row[5] else [],
                 "recommended_action": row[6]
             })
-
+ 
         data = json.dumps(payload).encode('utf-8')
         
-        req = urllib.request.Request(ITAM_SERVER_URL, data=data)
+        req = urllib.request.Request(itam_server_url, data=data)
         req.add_header('Content-Type', 'application/json')
         req.add_header('x-telemetry-key', ITAM_API_KEY)
-
+ 
         try:
             with urllib.request.urlopen(req, timeout=10) as response:
                 if response.status == 200:
@@ -61,6 +83,7 @@ def sync_labels():
             print(f"Error syncing to ITAM server: {e}")
             print("Will try again next cycle.")
             break # stop processing batches if server is down
+
 
 if __name__ == "__main__":
     print("Starting continuous sync service. Press Ctrl+C to stop.")
