@@ -1,5 +1,6 @@
 {
   "asset_tag": "LAPTOP-01",
-  "server_url": "http://192.168.1.159:3000/api/telemetry/sync",
+  "server_url": "http://10.96.5.155:3000/api/telemetry/sync",
+  
   "check_services": false
 }
